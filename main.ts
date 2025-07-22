@@ -1,85 +1,94 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Editor, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile, Modal } from 'obsidian';
+import { spawn } from 'child_process';
+import * as path from 'path';
 
-// Remember to rename these classes and interfaces!
-
-interface MyPluginSettings {
-	mySetting: string;
+interface TightListsSettings {
+	autoFormatEnabled: boolean;
+	debounceDelay: number;
+	useMdformat: boolean;
+	folderRules: Record<string, { enabled: boolean; useMdformat?: boolean }>;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+const DEFAULT_SETTINGS: TightListsSettings = {
+	autoFormatEnabled: false,
+	debounceDelay: 5,
+	useMdformat: false,
+	folderRules: {}
+};
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class TightListsFormatterPlugin extends Plugin {
+	settings: TightListsSettings;
+	private formatDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
+	private scriptPath: string;
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+		// Set the path to the shell script
+		this.scriptPath = path.join((this.app.vault.adapter as any).basePath, '.obsidian', 'plugins', this.manifest.id, 'md-tight-lists.sh');
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
+		// Add ribbon icon
+		this.addRibbonIcon('list', 'Format lists', () => {
+			this.formatCurrentFile();
 		});
-		// This adds an editor command that can perform some operation on the current editor instance
+
+		// Add command to format current file
 		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
+			id: 'format-current-file',
+			name: 'Format current file',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
+				this.formatCurrentFile();
 			}
 		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
+
+		// Add command to format current file with mdformat
 		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
+			id: 'format-current-file-with-mdformat',
+			name: 'Format current file (with mdformat)',
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				this.formatCurrentFile(true);
 			}
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
+		// Add command to format selection
+		this.addCommand({
+			id: 'format-selection',
+			name: 'Format selected text',
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				this.formatSelection(editor);
+			}
 		});
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		// Add command to toggle auto-format
+		this.addCommand({
+			id: 'toggle-auto-format',
+			name: 'Toggle auto-format',
+			callback: () => {
+				this.settings.autoFormatEnabled = !this.settings.autoFormatEnabled;
+				this.saveSettings();
+				new Notice(`Auto-format ${this.settings.autoFormatEnabled ? 'enabled' : 'disabled'}`);
+			}
+		});
+
+		// Add settings tab
+		this.addSettingTab(new TightListsSettingTab(this.app, this));
+
+		// Register editor change event for auto-formatting
+		this.registerEvent(
+			this.app.workspace.on('editor-change', (editor: Editor, view: MarkdownView) => {
+				if (this.settings.autoFormatEnabled && view.file) {
+					this.scheduleAutoFormat(view.file);
+				}
+			})
+		);
 	}
 
 	onunload() {
-
+		// Clear all debounce timers
+		for (const timer of this.formatDebounceTimers.values()) {
+			clearTimeout(timer);
+		}
+		this.formatDebounceTimers.clear();
 	}
 
 	async loadSettings() {
@@ -89,46 +98,294 @@ export default class MyPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
+
+	private shouldAutoFormatFile(file: TFile): { enabled: boolean; useMdformat: boolean } {
+		const filePath = file.path;
+		
+		// Check folder-specific rules
+		let mostSpecificRule = { enabled: this.settings.autoFormatEnabled, useMdformat: this.settings.useMdformat };
+		let maxDepth = -1;
+
+		for (const [folderPath, rule] of Object.entries(this.settings.folderRules)) {
+			if (filePath.startsWith(folderPath)) {
+				const depth = folderPath.split('/').length;
+				if (depth > maxDepth) {
+					maxDepth = depth;
+					mostSpecificRule = {
+						enabled: rule.enabled,
+						useMdformat: rule.useMdformat !== undefined ? rule.useMdformat : this.settings.useMdformat
+					};
+				}
+			}
+		}
+
+		return mostSpecificRule;
+	}
+
+	private scheduleAutoFormat(file: TFile) {
+		// Clear existing timer for this file
+		const existingTimer = this.formatDebounceTimers.get(file.path);
+		if (existingTimer) {
+			clearTimeout(existingTimer);
+		}
+
+		// Schedule new format
+		const timer = setTimeout(async () => {
+			const rule = this.shouldAutoFormatFile(file);
+			if (rule.enabled) {
+				await this.formatFile(file, rule.useMdformat);
+			}
+			this.formatDebounceTimers.delete(file.path);
+		}, this.settings.debounceDelay * 1000);
+
+		this.formatDebounceTimers.set(file.path, timer);
+	}
+
+	async formatCurrentFile(forceUseMdformat = false) {
+		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!activeView || !activeView.file) {
+			new Notice('No active markdown file');
+			return;
+		}
+
+		const useMdformat = forceUseMdformat || this.settings.useMdformat;
+		await this.formatFile(activeView.file, useMdformat);
+	}
+
+	async formatFile(file: TFile, useMdformat: boolean) {
+		try {
+			const content = await this.app.vault.read(file);
+			const formatted = await this.runFormatter(content, useMdformat);
+			
+			if (formatted !== content) {
+				await this.app.vault.modify(file, formatted);
+				new Notice('File formatted successfully');
+			} else {
+				new Notice('No formatting changes needed');
+			}
+		} catch (error) {
+			console.error('Format error:', error);
+			new Notice(`Formatting failed: ${error.message}`);
+		}
+	}
+
+	async formatSelection(editor: Editor) {
+		const selection = editor.getSelection();
+		if (!selection) {
+			new Notice('No text selected');
+			return;
+		}
+
+		try {
+			const formatted = await this.runFormatter(selection, this.settings.useMdformat);
+			editor.replaceSelection(formatted);
+			new Notice('Selection formatted successfully');
+		} catch (error) {
+			console.error('Format error:', error);
+			new Notice(`Formatting failed: ${error.message}`);
+		}
+	}
+
+	async runFormatter(content: string, useMdformat: boolean): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const args = [];
+			if (useMdformat) {
+				args.push('-f');
+			}
+
+			const child = spawn(this.scriptPath, args, {
+				stdio: ['pipe', 'pipe', 'pipe']
+			});
+
+			let stdout = '';
+			let stderr = '';
+
+			child.stdout.on('data', (data) => {
+				stdout += data.toString();
+			});
+
+			child.stderr.on('data', (data) => {
+				stderr += data.toString();
+			});
+
+			child.on('error', (error: any) => {
+				if (error.code === 'ENOENT') {
+					reject(new Error('Formatter script not found. Please ensure md-tight-lists.sh is in the plugin directory.'));
+				} else if (error.code === 'EACCES') {
+					reject(new Error('Formatter script is not executable. Please check file permissions.'));
+				} else {
+					reject(error);
+				}
+			});
+
+			child.on('close', (code) => {
+				if (code === 0) {
+					resolve(stdout);
+				} else {
+					reject(new Error(`Formatter exited with code ${code}: ${stderr}`));
+				}
+			});
+
+			// Write input to stdin
+			child.stdin.write(content);
+			child.stdin.end();
+		});
+	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+class TightListsSettingTab extends PluginSettingTab {
+	plugin: TightListsFormatterPlugin;
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: TightListsFormatterPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
 
 	display(): void {
-		const {containerEl} = this;
-
+		const { containerEl } = this;
 		containerEl.empty();
 
+		containerEl.createEl('h2', { text: 'Tight Lists Formatter Settings' });
+
+		// Auto-format toggle
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+			.setName('Enable auto-format')
+			.setDesc('Automatically format files when editing')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoFormatEnabled)
 				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
+					this.plugin.settings.autoFormatEnabled = value;
 					await this.plugin.saveSettings();
 				}));
+
+		// Debounce delay
+		new Setting(containerEl)
+			.setName('Auto-format delay')
+			.setDesc('Seconds to wait after last edit before formatting (1-30)')
+			.addSlider(slider => slider
+				.setLimits(1, 30, 1)
+				.setValue(this.plugin.settings.debounceDelay)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.debounceDelay = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// Use mdformat
+		new Setting(containerEl)
+			.setName('Use mdformat')
+			.setDesc('Additionally format with mdformat (CommonMark formatter) if available')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.useMdformat)
+				.onChange(async (value) => {
+					this.plugin.settings.useMdformat = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// Folder rules section
+		containerEl.createEl('h3', { text: 'Folder-specific rules' });
+		containerEl.createEl('p', { 
+			text: 'Configure auto-format settings for specific folders. More specific paths take precedence.',
+			cls: 'setting-item-description'
+		});
+
+		// Add new folder rule button
+		new Setting(containerEl)
+			.setName('Add folder rule')
+			.setDesc('Add a new folder-specific formatting rule')
+			.addButton(button => button
+				.setButtonText('Add rule')
+				.onClick(() => {
+					this.addFolderRule();
+				}));
+
+		// Display existing folder rules
+		const rulesContainer = containerEl.createDiv('folder-rules-container');
+		this.displayFolderRules(rulesContainer);
+	}
+
+	displayFolderRules(container: HTMLElement) {
+		container.empty();
+
+		for (const [folderPath, rule] of Object.entries(this.plugin.settings.folderRules)) {
+			const ruleSetting = new Setting(container)
+				.setName(folderPath)
+				.addToggle(toggle => toggle
+					.setValue(rule.enabled)
+					.onChange(async (value) => {
+						this.plugin.settings.folderRules[folderPath].enabled = value;
+						await this.plugin.saveSettings();
+					}))
+				.addToggle(toggle => toggle
+					.setValue(rule.useMdformat ?? this.plugin.settings.useMdformat)
+					.setTooltip('Use mdformat')
+					.onChange(async (value) => {
+						this.plugin.settings.folderRules[folderPath].useMdformat = value;
+						await this.plugin.saveSettings();
+					}))
+				.addButton(button => button
+					.setButtonText('Remove')
+					.setWarning()
+					.onClick(async () => {
+						delete this.plugin.settings.folderRules[folderPath];
+						await this.plugin.saveSettings();
+						this.display();
+					}));
+		}
+	}
+
+	async addFolderRule() {
+		const modal = new FolderRuleModal(this.app, async (folderPath) => {
+			if (folderPath && !this.plugin.settings.folderRules[folderPath]) {
+				this.plugin.settings.folderRules[folderPath] = {
+					enabled: true,
+					useMdformat: this.plugin.settings.useMdformat
+				};
+				await this.plugin.saveSettings();
+				this.display();
+			}
+		});
+		modal.open();
+	}
+}
+
+class FolderRuleModal extends Modal {
+	constructor(app: App, private onSubmit: (folderPath: string) => void) {
+		super(app);
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl('h2', { text: 'Add folder rule' });
+
+		new Setting(contentEl)
+			.setName('Folder path')
+			.setDesc('Enter the folder path (e.g., "Notes/Daily")')
+			.addText(text => {
+				text.setPlaceholder('Folder path');
+				text.inputEl.addEventListener('keydown', (e) => {
+					if (e.key === 'Enter') {
+						this.onSubmit(text.getValue());
+						this.close();
+					}
+				});
+			});
+
+		new Setting(contentEl)
+			.addButton(button => button
+				.setButtonText('Add')
+				.setCta()
+				.onClick(() => {
+					const input = contentEl.querySelector('input');
+					if (input) {
+						this.onSubmit(input.value);
+						this.close();
+					}
+				}));
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }
