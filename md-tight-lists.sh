@@ -44,6 +44,31 @@ EOF
 # Function to process markdown content
 process_markdown() {
     awk '
+    BEGIN {
+        in_frontmatter = 0
+        frontmatter_ended = 0
+    }
+    
+    # Handle frontmatter
+    NR == 1 && /^---$/ {
+        in_frontmatter = 1
+        print
+        next
+    }
+    
+    in_frontmatter && /^---$/ {
+        in_frontmatter = 0
+        frontmatter_ended = 1
+        print
+        next
+    }
+    
+    in_frontmatter {
+        print
+        next
+    }
+    
+    # Regular processing after frontmatter
     /^[[:space:]]*[-*+][[:space:]]/ || /^[[:space:]]*[0-9]+\.[[:space:]]/ {
         # This is a list item (list marker followed by space)
         if (!in_list && NR > 1 && last_line != "") {

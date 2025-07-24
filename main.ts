@@ -1,6 +1,7 @@
-import { App, Editor, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile, Modal } from 'obsidian';
+import { App, Editor, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, Modal } from 'obsidian';
 import { spawn } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
 
 interface TightListsSettings {
 	autoFormatEnabled: boolean;
@@ -20,12 +21,21 @@ export default class TightListsFormatterPlugin extends Plugin {
 	settings: TightListsSettings;
 	private formatDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
 	private scriptPath: string;
+	public mdformatAvailable: boolean = false;
+	public mdformatPath: string | null = null;
+	private currentlyFormatting: Set<string> = new Set();
 
 	async onload() {
 		await this.loadSettings();
 
 		// Set the path to the shell script
-		this.scriptPath = path.join((this.app.vault.adapter as any).basePath, '.obsidian', 'plugins', this.manifest.id, 'md-tight-lists.sh');
+		// Simple path resolution - the script is in the same directory as the plugin
+		const adapter = this.app.vault.adapter as any;
+		const pluginDir = path.join(adapter.basePath, '.obsidian', 'plugins', this.manifest.id);
+		this.scriptPath = path.join(pluginDir, 'md-tight-lists.sh');
+		
+		// Check for mdformat availability
+		await this.checkMdformatAvailability();
 
 		// Add ribbon icon
 		this.addRibbonIcon('list', 'Format lists', () => {
@@ -41,14 +51,16 @@ export default class TightListsFormatterPlugin extends Plugin {
 			}
 		});
 
-		// Add command to format current file with mdformat
-		this.addCommand({
-			id: 'format-current-file-with-mdformat',
-			name: 'Format current file (with mdformat)',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				this.formatCurrentFile(true);
-			}
-		});
+		// Add command to format current file with mdformat (only if available)
+		if (this.mdformatAvailable) {
+			this.addCommand({
+				id: 'format-current-file-with-mdformat',
+				name: 'Format current file (with mdformat)',
+				editorCallback: (editor: Editor, view: MarkdownView) => {
+					this.formatCurrentFile(true);
+				}
+			});
+		}
 
 		// Add command to format selection
 		this.addCommand({
@@ -58,6 +70,17 @@ export default class TightListsFormatterPlugin extends Plugin {
 				this.formatSelection(editor);
 			}
 		});
+
+		// Add command to format selection with mdformat (only if available)
+		if (this.mdformatAvailable) {
+			this.addCommand({
+				id: 'format-selection-with-mdformat',
+				name: 'Format selected text (with mdformat)',
+				editorCallback: (editor: Editor, view: MarkdownView) => {
+					this.formatSelection(editor, true);
+				}
+			});
+		}
 
 		// Add command to toggle auto-format
 		this.addCommand({
@@ -73,11 +96,48 @@ export default class TightListsFormatterPlugin extends Plugin {
 		// Add settings tab
 		this.addSettingTab(new TightListsSettingTab(this.app, this));
 
+		// Add context menu for selected text
+		this.registerEvent(
+			this.app.workspace.on('editor-menu', (menu, editor, view) => {
+				if (editor.getSelection()) {
+					menu.addSeparator();
+					menu.addItem((item) => {
+						item
+							.setTitle('Format Tight Lists')
+							.setIcon('list')
+							.onClick(() => {
+								this.formatSelection(editor);
+							});
+					});
+					// Only add mdformat option if available
+					if (this.mdformatAvailable) {
+						menu.addItem((item) => {
+							item
+								.setTitle('Format Tight Lists (mdformat)')
+								.setIcon('list')
+								.onClick(() => {
+									this.formatSelection(editor, true);
+								});
+						});
+					}
+				}
+			})
+		);
+
 		// Register editor change event for auto-formatting
 		this.registerEvent(
 			this.app.workspace.on('editor-change', (editor: Editor, view: MarkdownView) => {
-				if (this.settings.autoFormatEnabled && view.file) {
-					this.scheduleAutoFormat(view.file);
+				if (view.file) {
+					// Skip if we're currently formatting this file
+					if (this.currentlyFormatting.has(view.file.path)) {
+						return;
+					}
+					
+					const rule = this.shouldAutoFormatFile(view.file);
+					
+					if (rule.enabled) {
+						this.scheduleAutoFormat(view.file);
+					}
 				}
 			})
 		);
@@ -99,6 +159,60 @@ export default class TightListsFormatterPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	private async checkMdformatAvailability(): Promise<void> {
+		// Priority order for checking mdformat locations
+		const possiblePaths = [
+			// pipx default installation
+			path.join(process.env.HOME || '', '.local', 'bin', 'mdformat'),
+			// Homebrew installation
+			'/opt/homebrew/bin/mdformat',
+			// System installation
+			'/usr/local/bin/mdformat',
+			// Legacy locations
+			'/usr/bin/mdformat'
+		];
+
+		// Check each possible path
+		for (const mdformatPath of possiblePaths) {
+			try {
+				if (fs.existsSync(mdformatPath)) {
+					// Verify it's executable
+					const stats = fs.statSync(mdformatPath);
+					if (stats.isFile() && (stats.mode & 0o111)) {
+						this.mdformatAvailable = true;
+						this.mdformatPath = mdformatPath;
+						return;
+					}
+				}
+			} catch (error) {
+				// Continue checking other paths
+			}
+		}
+
+		// If not found in standard locations, try PATH
+		try {
+			const pathEnv = process.env.PATH || '';
+			const pathDirs = pathEnv.split(':');
+			
+			for (const dir of pathDirs) {
+				const mdformatPath = path.join(dir, 'mdformat');
+				if (fs.existsSync(mdformatPath)) {
+					const stats = fs.statSync(mdformatPath);
+					if (stats.isFile() && (stats.mode & 0o111)) {
+						this.mdformatAvailable = true;
+						this.mdformatPath = mdformatPath;
+						return;
+					}
+				}
+			}
+		} catch (error) {
+			// PATH search failed
+		}
+
+		this.mdformatAvailable = false;
+		this.mdformatPath = null;
+	}
+
 	private shouldAutoFormatFile(file: TFile): { enabled: boolean; useMdformat: boolean } {
 		const filePath = file.path;
 		
@@ -107,7 +221,12 @@ export default class TightListsFormatterPlugin extends Plugin {
 		let maxDepth = -1;
 
 		for (const [folderPath, rule] of Object.entries(this.settings.folderRules)) {
-			if (filePath.startsWith(folderPath)) {
+			// Check if file is directly in this folder or in a subfolder
+			const isInFolder = filePath.startsWith(folderPath + '/') || 
+							  filePath === folderPath ||
+							  (filePath.startsWith(folderPath) && filePath.charAt(folderPath.length) === '/');
+			
+			if (isInFolder) {
 				const depth = folderPath.split('/').length;
 				if (depth > maxDepth) {
 					maxDepth = depth;
@@ -133,7 +252,7 @@ export default class TightListsFormatterPlugin extends Plugin {
 		const timer = setTimeout(async () => {
 			const rule = this.shouldAutoFormatFile(file);
 			if (rule.enabled) {
-				await this.formatFile(file, rule.useMdformat);
+				await this.formatFile(file, rule.useMdformat, true); // true = silent mode for auto-format
 			}
 			this.formatDebounceTimers.delete(file.path);
 		}, this.settings.debounceDelay * 1000);
@@ -149,27 +268,39 @@ export default class TightListsFormatterPlugin extends Plugin {
 		}
 
 		const useMdformat = forceUseMdformat || this.settings.useMdformat;
-		await this.formatFile(activeView.file, useMdformat);
+		await this.formatFile(activeView.file, useMdformat, false); // false = not silent, show notices
 	}
 
-	async formatFile(file: TFile, useMdformat: boolean) {
+	async formatFile(file: TFile, useMdformat: boolean, silent: boolean = false) {
+		// Mark as currently formatting to prevent recursive calls
+		this.currentlyFormatting.add(file.path);
+		
 		try {
 			const content = await this.app.vault.read(file);
 			const formatted = await this.runFormatter(content, useMdformat);
 			
 			if (formatted !== content) {
 				await this.app.vault.modify(file, formatted);
-				new Notice('File formatted successfully');
+				if (!silent) {
+					new Notice('File formatted successfully');
+				}
 			} else {
-				new Notice('No formatting changes needed');
+				if (!silent) {
+					new Notice('No formatting changes needed');
+				}
 			}
 		} catch (error) {
 			console.error('Format error:', error);
-			new Notice(`Formatting failed: ${error.message}`);
+			if (!silent) {
+				new Notice(`Formatting failed: ${error.message}`);
+			}
+		} finally {
+			// Always remove from formatting set
+			this.currentlyFormatting.delete(file.path);
 		}
 	}
 
-	async formatSelection(editor: Editor) {
+	async formatSelection(editor: Editor, forceUseMdformat = false) {
 		const selection = editor.getSelection();
 		if (!selection) {
 			new Notice('No text selected');
@@ -177,9 +308,34 @@ export default class TightListsFormatterPlugin extends Plugin {
 		}
 
 		try {
-			const formatted = await this.runFormatter(selection, this.settings.useMdformat);
-			editor.replaceSelection(formatted);
-			new Notice('Selection formatted successfully');
+			// Expand selection to full lines
+			const selectionRange = {
+				from: editor.getCursor('from'),
+				to: editor.getCursor('to')
+			};
+
+			// Expand to start of first line and end of last line
+			const expandedFrom = {
+				line: selectionRange.from.line,
+				ch: 0
+			};
+			const lastLine = editor.getLine(selectionRange.to.line);
+			const expandedTo = {
+				line: selectionRange.to.line,
+				ch: lastLine.length
+			};
+
+			// Get the expanded selection text
+			const expandedSelection = editor.getRange(expandedFrom, expandedTo);
+			
+			const useMdformat = forceUseMdformat || this.settings.useMdformat;
+			
+			const formatted = await this.runFormatter(expandedSelection, useMdformat);
+			
+			// Replace the expanded selection
+			editor.replaceRange(formatted, expandedFrom, expandedTo);
+			
+			new Notice(`Selection formatted successfully ${useMdformat ? '(with mdformat)' : ''}`);
 		} catch (error) {
 			console.error('Format error:', error);
 			new Notice(`Formatting failed: ${error.message}`);
@@ -193,8 +349,21 @@ export default class TightListsFormatterPlugin extends Plugin {
 				args.push('-f');
 			}
 
+			// Build enhanced environment with proper PATH
+			const env = { ...process.env };
+			
+			if (useMdformat && this.mdformatPath) {
+				// If we have a specific mdformat path, ensure its directory is in PATH
+				const mdformatDir = path.dirname(this.mdformatPath);
+				const currentPath = env.PATH || '';
+				if (!currentPath.includes(mdformatDir)) {
+					env.PATH = `${mdformatDir}:${currentPath}`;
+				}
+			}
+
 			const child = spawn(this.scriptPath, args, {
-				stdio: ['pipe', 'pipe', 'pipe']
+				stdio: ['pipe', 'pipe', 'pipe'],
+				env
 			});
 
 			let stdout = '';
@@ -272,21 +441,32 @@ class TightListsSettingTab extends PluginSettingTab {
 				}));
 
 		// Use mdformat
-		new Setting(containerEl)
+		const mdformatSetting = new Setting(containerEl)
 			.setName('Use mdformat')
-			.setDesc('Additionally format with mdformat (CommonMark formatter) if available')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.useMdformat)
+				.setDisabled(!this.plugin.mdformatAvailable)
 				.onChange(async (value) => {
 					this.plugin.settings.useMdformat = value;
 					await this.plugin.saveSettings();
 				}));
 
+		if (this.plugin.mdformatAvailable) {
+			mdformatSetting.setDesc(`✅ mdformat available at: ${this.plugin.mdformatPath}\nAdditionally format with mdformat (GitHub-flavored Markdown)`);
+		} else {
+			mdformatSetting.setDesc(`❌ mdformat not found\nInstall with: pipx install mdformat && pipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-gfm-alerts`);
+		}
+
 		// Folder rules section
 		containerEl.createEl('h3', { text: 'Folder-specific rules' });
-		containerEl.createEl('p', { 
-			text: 'Configure auto-format settings for specific folders. More specific paths take precedence.',
-			cls: 'setting-item-description'
+		
+		const descEl = containerEl.createEl('div', { cls: 'setting-item-description' });
+		descEl.createEl('p', { 
+			text: `Configure automatic formatting for specific folders. When enabled, files in these folders will be auto-formatted after the global delay (currently ${this.plugin.settings.debounceDelay} seconds). Folder rules override global auto-format settings, and more specific paths take precedence over less specific ones.`
+		});
+		descEl.createEl('p', { 
+			text: 'Note: Adding a folder rule enables automatic formatting for that folder, even if global auto-format is disabled.',
+			cls: 'mod-warning'
 		});
 
 		// Add new folder rule button
@@ -308,23 +488,56 @@ class TightListsSettingTab extends PluginSettingTab {
 		container.empty();
 
 		for (const [folderPath, rule] of Object.entries(this.plugin.settings.folderRules)) {
-			const ruleSetting = new Setting(container)
-				.setName(folderPath)
+			// Create a container for this folder rule
+			const ruleContainer = container.createDiv('folder-rule-container');
+			ruleContainer.style.border = '1px solid var(--background-modifier-border)';
+			ruleContainer.style.borderRadius = '6px';
+			ruleContainer.style.padding = '12px';
+			ruleContainer.style.marginBottom = '12px';
+			ruleContainer.style.backgroundColor = 'var(--background-secondary)';
+
+			// Folder path header
+			const headerEl = ruleContainer.createEl('h4', { 
+				text: folderPath,
+				cls: 'setting-item-name'
+			});
+			headerEl.style.marginTop = '0';
+			headerEl.style.marginBottom = '8px';
+
+			// Auto-format toggle
+			new Setting(ruleContainer)
+				.setName('Auto-format')
+				.setDesc('Enable automatic formatting for files in this folder')
 				.addToggle(toggle => toggle
 					.setValue(rule.enabled)
 					.onChange(async (value) => {
 						this.plugin.settings.folderRules[folderPath].enabled = value;
 						await this.plugin.saveSettings();
-					}))
-				.addToggle(toggle => toggle
-					.setValue(rule.useMdformat ?? this.plugin.settings.useMdformat)
-					.setTooltip('Use mdformat')
-					.onChange(async (value) => {
-						this.plugin.settings.folderRules[folderPath].useMdformat = value;
-						await this.plugin.saveSettings();
-					}))
+					}));
+
+			// mdformat toggle (only if mdformat is available)
+			if (this.plugin.mdformatAvailable) {
+				new Setting(ruleContainer)
+					.setName('Use mdformat')
+					.setDesc('Apply mdformat in addition to tight lists formatting')
+					.addToggle(toggle => toggle
+						.setValue(rule.useMdformat ?? this.plugin.settings.useMdformat)
+						.onChange(async (value) => {
+							this.plugin.settings.folderRules[folderPath].useMdformat = value;
+							await this.plugin.saveSettings();
+						}));
+			} else {
+				// Show mdformat unavailable message
+				const mdformatSetting = new Setting(ruleContainer)
+					.setName('Use mdformat')
+					.setDesc('❌ mdformat not available - install mdformat to enable this option');
+				mdformatSetting.settingEl.style.opacity = '0.6';
+			}
+
+			// Remove button
+			new Setting(ruleContainer)
 				.addButton(button => button
-					.setButtonText('Remove')
+					.setButtonText('Remove folder rule')
 					.setWarning()
 					.onClick(async () => {
 						delete this.plugin.settings.folderRules[folderPath];
@@ -334,16 +547,38 @@ class TightListsSettingTab extends PluginSettingTab {
 		}
 	}
 
+	private validateFolderPath(folderPath: string): boolean {
+		// Check if path exists in vault as a folder
+		const abstractFile = this.app.vault.getAbstractFileByPath(folderPath);
+		return abstractFile instanceof TFolder;
+	}
+
 	async addFolderRule() {
 		const modal = new FolderRuleModal(this.app, async (folderPath) => {
-			if (folderPath && !this.plugin.settings.folderRules[folderPath]) {
-				this.plugin.settings.folderRules[folderPath] = {
-					enabled: true,
-					useMdformat: this.plugin.settings.useMdformat
-				};
-				await this.plugin.saveSettings();
-				this.display();
+			if (!folderPath) {
+				return;
 			}
+
+			// Validate folder path
+			if (!this.validateFolderPath(folderPath)) {
+				new Notice(`Folder not found: "${folderPath}". Please enter a valid folder path.`);
+				return;
+			}
+
+			// Check if rule already exists
+			if (this.plugin.settings.folderRules[folderPath]) {
+				new Notice(`Folder rule for "${folderPath}" already exists.`);
+				return;
+			}
+
+			// Add the rule
+			this.plugin.settings.folderRules[folderPath] = {
+				enabled: true,
+				useMdformat: this.plugin.settings.useMdformat
+			};
+			await this.plugin.saveSettings();
+			this.display();
+			new Notice(`Added folder rule for "${folderPath}"`);
 		});
 		modal.open();
 	}
@@ -358,29 +593,46 @@ class FolderRuleModal extends Modal {
 		const { contentEl } = this;
 		contentEl.createEl('h2', { text: 'Add folder rule' });
 
+		// Add explanation
+		const explanationEl = contentEl.createEl('p', { cls: 'setting-item-description' });
+		explanationEl.innerHTML = `
+			Enter the path to a folder in your vault. This will enable automatic formatting for all files in that folder.
+			<br><br>
+			<strong>Examples:</strong>
+			<br>• <code>Notes</code> - Top-level folder
+			<br>• <code>Notes/Daily</code> - Subfolder
+			<br>• <code>Projects/Work/Documentation</code> - Nested folder
+		`;
+
+		let textInput: HTMLInputElement;
 		new Setting(contentEl)
 			.setName('Folder path')
-			.setDesc('Enter the folder path (e.g., "Notes/Daily")')
+			.setDesc('Enter the exact folder path as it appears in your vault')
 			.addText(text => {
-				text.setPlaceholder('Folder path');
+				textInput = text.inputEl;
+				text.setPlaceholder('e.g., Notes/Daily');
 				text.inputEl.addEventListener('keydown', (e) => {
 					if (e.key === 'Enter') {
-						this.onSubmit(text.getValue());
+						this.onSubmit(text.getValue().trim());
 						this.close();
 					}
 				});
+				// Focus the input
+				setTimeout(() => text.inputEl.focus(), 100);
 			});
 
 		new Setting(contentEl)
 			.addButton(button => button
+				.setButtonText('Cancel')
+				.onClick(() => {
+					this.close();
+				}))
+			.addButton(button => button
 				.setButtonText('Add')
 				.setCta()
 				.onClick(() => {
-					const input = contentEl.querySelector('input');
-					if (input) {
-						this.onSubmit(input.value);
-						this.close();
-					}
+					this.onSubmit(textInput.value.trim());
+					this.close();
 				}));
 	}
 

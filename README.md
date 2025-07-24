@@ -44,7 +44,30 @@ For each folder, you can:
 
 - Obsidian desktop app (this plugin uses shell scripts and is desktop-only)
 - Bash shell available on your system
-- Optional: `mdformat` installed (`pip install mdformat`) for additional formatting
+- Optional: `mdformat` with GitHub-flavored Markdown support for enhanced formatting
+
+### Installing mdformat (Optional)
+
+For the best formatting experience with full GitHub-flavored Markdown (GFM) support, install mdformat using pipx:
+
+```bash
+# Install pipx if you don't have it
+pip install pipx
+
+# Install mdformat with GFM extensions
+pipx install mdformat
+pipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-gfm-alerts
+```
+
+**Why pipx?** pipx installs Python packages in isolated environments, preventing dependency conflicts while making the commands globally available.
+
+**What this adds:**
+- **mdformat-gfm**: GitHub-flavored Markdown support (tables, strikethrough, etc.)
+- **mdformat-frontmatter**: Preserves YAML frontmatter (already handled by our script)
+- **mdformat-footnote**: Proper footnote formatting
+- **mdformat-gfm-alerts**: GitHub alert boxes (`> [!NOTE]`, etc.)
+
+If mdformat is not detected, the plugin will automatically hide the mdformat-related commands and work with basic tight list formatting only.
 
 ## Usage
 
