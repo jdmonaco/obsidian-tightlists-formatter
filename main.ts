@@ -288,10 +288,16 @@ export default class TightListsFormatterPlugin extends Plugin {
 		
 		try {
 			const content = await this.app.vault.read(file);
-			const formatted = await this.runFormatter(content, useMdformat);
 			
-			if (formatted !== content) {
-				await this.app.vault.modify(file, formatted);
+			// Ensure content ends with newline for proper formatting
+			const contentToFormat = content.endsWith('\n') ? content : content + '\n';
+			const formatted = await this.runFormatter(contentToFormat, useMdformat);
+			
+			// Preserve original newline ending
+			const formattedResult = content.endsWith('\n') ? formatted : formatted.trimEnd();
+			
+			if (formattedResult !== content) {
+				await this.app.vault.modify(file, formattedResult);
 				if (!silent) {
 					new Notice('File formatted successfully');
 				}
@@ -339,10 +345,16 @@ export default class TightListsFormatterPlugin extends Plugin {
 			// Get the expanded selection text
 			const expandedSelection = editor.getRange(expandedFrom, expandedTo);
 			
-			const formatted = await this.runFormatter(expandedSelection, this.settings.useMdformat);
+			// Ensure we have a newline at the end for proper formatting
+			const contentToFormat = expandedSelection.endsWith('\n') ? expandedSelection : expandedSelection + '\n';
+			
+			const formatted = await this.runFormatter(contentToFormat, this.settings.useMdformat);
+			
+			// Remove trailing newline if we added one
+			const formattedResult = expandedSelection.endsWith('\n') ? formatted : formatted.trimEnd();
 			
 			// Replace the expanded selection
-			editor.replaceRange(formatted, expandedFrom, expandedTo);
+			editor.replaceRange(formattedResult, expandedFrom, expandedTo);
 			
 			new Notice('Selection formatted successfully');
 		} catch (error) {
@@ -363,7 +375,7 @@ export default class TightListsFormatterPlugin extends Plugin {
 
 	private async runMdformat(content: string): Promise<string> {
 		return new Promise((resolve, reject) => {
-			const child = spawn(this.mdformatPath!, [], {
+			const child = spawn(this.mdformatPath!, ['-'], {
 				stdio: ['pipe', 'pipe', 'pipe']
 			});
 
@@ -384,7 +396,11 @@ export default class TightListsFormatterPlugin extends Plugin {
 
 			child.on('close', (code) => {
 				if (code === 0) {
-					resolve(stdout);
+					if (!stdout || stdout.trim() === '') {
+						reject(new Error('mdformat returned empty output'));
+					} else {
+						resolve(stdout);
+					}
 				} else {
 					reject(new Error(`mdformat exited with code ${code}: ${stderr}`));
 				}
@@ -488,13 +504,11 @@ class TightListsSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}));
 
-			let desc = `✅ mdformat available`;
 			if (this.plugin.mdformatTightListsAvailable) {
-				desc += '\n✅ mdformat-tight-lists plugin installed\n\nWhen enabled, applies comprehensive CommonMark formatting with automatic tight list formatting.';
+				mdformatSetting.setDesc('✅ mdformat with tight-lists plugin available. When enabled, applies comprehensive CommonMark formatting with automatic tight list formatting.');
 			} else {
-				desc += '\n⚠️ mdformat-tight-lists plugin not found. Lists won\'t be automatically tightened.\n\nInstall with: pipx inject mdformat mdformat-tight-lists';
+				mdformatSetting.setDesc('⚠️ mdformat available but tight-lists plugin not found. Lists won\'t be automatically tightened. Install with: pipx inject mdformat mdformat-tight-lists');
 			}
-			mdformatSetting.setDesc(desc);
 		} else {
 			// Show installation instructions when mdformat is not available
 			new Setting(containerEl)
@@ -503,7 +517,7 @@ class TightListsSettingTab extends PluginSettingTab {
 		}
 
 		// Folder rules section
-		containerEl.createEl('h3', { text: 'Folder-specific rules' });
+		containerEl.createEl('h3', { text: 'Folder-Specific Rules' });
 		
 		const descEl = containerEl.createEl('div', { cls: 'setting-item-description' });
 		descEl.createEl('p', { 
