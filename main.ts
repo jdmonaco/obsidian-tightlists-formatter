@@ -7,7 +7,7 @@ interface TightListsSettings {
 	autoFormatEnabled: boolean;
 	debounceDelay: number;
 	useMdformat: boolean;
-	folderRules: Record<string, { enabled: boolean; useMdformat?: boolean }>;
+	folderRules: Record<string, { enabled: boolean }>;
 }
 
 const DEFAULT_SETTINGS: TightListsSettings = {
@@ -23,6 +23,7 @@ export default class TightListsFormatterPlugin extends Plugin {
 	private scriptPath: string;
 	public mdformatAvailable: boolean = false;
 	public mdformatPath: string | null = null;
+	public mdformatTightListsAvailable: boolean = false;
 	private currentlyFormatting: Set<string> = new Set();
 
 	async onload() {
@@ -51,17 +52,6 @@ export default class TightListsFormatterPlugin extends Plugin {
 			}
 		});
 
-		// Add command to format current file with mdformat (only if available)
-		if (this.mdformatAvailable) {
-			this.addCommand({
-				id: 'format-current-file-with-mdformat',
-				name: 'Format current file (with mdformat)',
-				editorCallback: (editor: Editor, view: MarkdownView) => {
-					this.formatCurrentFile(true);
-				}
-			});
-		}
-
 		// Add command to format selection
 		this.addCommand({
 			id: 'format-selection',
@@ -70,17 +60,6 @@ export default class TightListsFormatterPlugin extends Plugin {
 				this.formatSelection(editor);
 			}
 		});
-
-		// Add command to format selection with mdformat (only if available)
-		if (this.mdformatAvailable) {
-			this.addCommand({
-				id: 'format-selection-with-mdformat',
-				name: 'Format selected text (with mdformat)',
-				editorCallback: (editor: Editor, view: MarkdownView) => {
-					this.formatSelection(editor, true);
-				}
-			});
-		}
 
 		// Add command to toggle auto-format
 		this.addCommand({
@@ -181,6 +160,8 @@ export default class TightListsFormatterPlugin extends Plugin {
 					if (stats.isFile() && (stats.mode & 0o111)) {
 						this.mdformatAvailable = true;
 						this.mdformatPath = mdformatPath;
+						// Check for tight-lists plugin
+						await this.checkMdformatTightLists();
 						return;
 					}
 				}
@@ -201,6 +182,8 @@ export default class TightListsFormatterPlugin extends Plugin {
 					if (stats.isFile() && (stats.mode & 0o111)) {
 						this.mdformatAvailable = true;
 						this.mdformatPath = mdformatPath;
+						// Check for tight-lists plugin
+						await this.checkMdformatTightLists();
 						return;
 					}
 				}
@@ -211,13 +194,45 @@ export default class TightListsFormatterPlugin extends Plugin {
 
 		this.mdformatAvailable = false;
 		this.mdformatPath = null;
+		this.mdformatTightListsAvailable = false;
 	}
 
-	private shouldAutoFormatFile(file: TFile): { enabled: boolean; useMdformat: boolean } {
+	private async checkMdformatTightLists(): Promise<void> {
+		if (!this.mdformatPath) return;
+		
+		try {
+			// Run mdformat --help to check for tight-lists plugin
+			const result = await new Promise<string>((resolve, reject) => {
+				const child = spawn(this.mdformatPath!, ['--help'], {
+					stdio: ['pipe', 'pipe', 'pipe']
+				});
+				
+				let stdout = '';
+				child.stdout.on('data', (data) => {
+					stdout += data.toString();
+				});
+				
+				child.on('close', (code) => {
+					if (code === 0) {
+						resolve(stdout);
+					} else {
+						reject(new Error('Failed to check mdformat'));
+					}
+				});
+			});
+			
+			// Check if tight-lists extension is mentioned in help output
+			this.mdformatTightListsAvailable = result.includes('tight-lists');
+		} catch (error) {
+			this.mdformatTightListsAvailable = false;
+		}
+	}
+
+	private shouldAutoFormatFile(file: TFile): boolean {
 		const filePath = file.path;
 		
 		// Check folder-specific rules
-		let mostSpecificRule = { enabled: this.settings.autoFormatEnabled, useMdformat: this.settings.useMdformat };
+		let shouldFormat = this.settings.autoFormatEnabled;
 		let maxDepth = -1;
 
 		for (const [folderPath, rule] of Object.entries(this.settings.folderRules)) {
@@ -230,15 +245,12 @@ export default class TightListsFormatterPlugin extends Plugin {
 				const depth = folderPath.split('/').length;
 				if (depth > maxDepth) {
 					maxDepth = depth;
-					mostSpecificRule = {
-						enabled: rule.enabled,
-						useMdformat: rule.useMdformat !== undefined ? rule.useMdformat : this.settings.useMdformat
-					};
+					shouldFormat = rule.enabled;
 				}
 			}
 		}
 
-		return mostSpecificRule;
+		return shouldFormat;
 	}
 
 	private scheduleAutoFormat(file: TFile) {
@@ -250,9 +262,9 @@ export default class TightListsFormatterPlugin extends Plugin {
 
 		// Schedule new format
 		const timer = setTimeout(async () => {
-			const rule = this.shouldAutoFormatFile(file);
-			if (rule.enabled) {
-				await this.formatFile(file, rule.useMdformat, true); // true = silent mode for auto-format
+			const shouldFormat = this.shouldAutoFormatFile(file);
+			if (shouldFormat) {
+				await this.formatFile(file, this.settings.useMdformat, true); // true = silent mode for auto-format
 			}
 			this.formatDebounceTimers.delete(file.path);
 		}, this.settings.debounceDelay * 1000);
@@ -260,15 +272,14 @@ export default class TightListsFormatterPlugin extends Plugin {
 		this.formatDebounceTimers.set(file.path, timer);
 	}
 
-	async formatCurrentFile(forceUseMdformat = false) {
+	async formatCurrentFile() {
 		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 		if (!activeView || !activeView.file) {
 			new Notice('No active markdown file');
 			return;
 		}
 
-		const useMdformat = forceUseMdformat || this.settings.useMdformat;
-		await this.formatFile(activeView.file, useMdformat, false); // false = not silent, show notices
+		await this.formatFile(activeView.file, this.settings.useMdformat, false); // false = not silent, show notices
 	}
 
 	async formatFile(file: TFile, useMdformat: boolean, silent: boolean = false) {
@@ -300,7 +311,7 @@ export default class TightListsFormatterPlugin extends Plugin {
 		}
 	}
 
-	async formatSelection(editor: Editor, forceUseMdformat = false) {
+	async formatSelection(editor: Editor) {
 		const selection = editor.getSelection();
 		if (!selection) {
 			new Notice('No text selected');
@@ -328,14 +339,12 @@ export default class TightListsFormatterPlugin extends Plugin {
 			// Get the expanded selection text
 			const expandedSelection = editor.getRange(expandedFrom, expandedTo);
 			
-			const useMdformat = forceUseMdformat || this.settings.useMdformat;
-			
-			const formatted = await this.runFormatter(expandedSelection, useMdformat);
+			const formatted = await this.runFormatter(expandedSelection, this.settings.useMdformat);
 			
 			// Replace the expanded selection
 			editor.replaceRange(formatted, expandedFrom, expandedTo);
 			
-			new Notice(`Selection formatted successfully ${useMdformat ? '(with mdformat)' : ''}`);
+			new Notice('Selection formatted successfully');
 		} catch (error) {
 			console.error('Format error:', error);
 			new Notice(`Formatting failed: ${error.message}`);
@@ -343,27 +352,54 @@ export default class TightListsFormatterPlugin extends Plugin {
 	}
 
 	async runFormatter(content: string, useMdformat: boolean): Promise<string> {
+		// If mdformat is requested and available, use it directly
+		if (useMdformat && this.mdformatAvailable && this.mdformatPath) {
+			return this.runMdformat(content);
+		}
+		
+		// Otherwise, use the tight-lists script
+		return this.runTightListsScript(content);
+	}
+
+	private async runMdformat(content: string): Promise<string> {
 		return new Promise((resolve, reject) => {
-			const args = [];
-			if (useMdformat) {
-				args.push('-f');
-			}
+			const child = spawn(this.mdformatPath!, [], {
+				stdio: ['pipe', 'pipe', 'pipe']
+			});
 
-			// Build enhanced environment with proper PATH
-			const env = { ...process.env };
-			
-			if (useMdformat && this.mdformatPath) {
-				// If we have a specific mdformat path, ensure its directory is in PATH
-				const mdformatDir = path.dirname(this.mdformatPath);
-				const currentPath = env.PATH || '';
-				if (!currentPath.includes(mdformatDir)) {
-					env.PATH = `${mdformatDir}:${currentPath}`;
+			let stdout = '';
+			let stderr = '';
+
+			child.stdout.on('data', (data) => {
+				stdout += data.toString();
+			});
+
+			child.stderr.on('data', (data) => {
+				stderr += data.toString();
+			});
+
+			child.on('error', (error: any) => {
+				reject(new Error(`Failed to run mdformat: ${error.message}`));
+			});
+
+			child.on('close', (code) => {
+				if (code === 0) {
+					resolve(stdout);
+				} else {
+					reject(new Error(`mdformat exited with code ${code}: ${stderr}`));
 				}
-			}
+			});
 
-			const child = spawn(this.scriptPath, args, {
-				stdio: ['pipe', 'pipe', 'pipe'],
-				env
+			// Write input to stdin
+			child.stdin.write(content);
+			child.stdin.end();
+		});
+	}
+
+	private async runTightListsScript(content: string): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const child = spawn(this.scriptPath, [], {
+				stdio: ['pipe', 'pipe', 'pipe']
 			});
 
 			let stdout = '';
@@ -440,21 +476,30 @@ class TightListsSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		// Use mdformat
-		const mdformatSetting = new Setting(containerEl)
-			.setName('Use mdformat')
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.useMdformat)
-				.setDisabled(!this.plugin.mdformatAvailable)
-				.onChange(async (value) => {
-					this.plugin.settings.useMdformat = value;
-					await this.plugin.saveSettings();
-				}));
-
+		// mdformat section
 		if (this.plugin.mdformatAvailable) {
-			mdformatSetting.setDesc(`✅ mdformat available at: ${this.plugin.mdformatPath}\nAdditionally format with mdformat (GitHub-flavored Markdown)`);
+			// Show toggle when mdformat is available
+			const mdformatSetting = new Setting(containerEl)
+				.setName('Use mdformat')
+				.addToggle(toggle => toggle
+					.setValue(this.plugin.settings.useMdformat)
+					.onChange(async (value) => {
+						this.plugin.settings.useMdformat = value;
+						await this.plugin.saveSettings();
+					}));
+
+			let desc = `✅ mdformat available`;
+			if (this.plugin.mdformatTightListsAvailable) {
+				desc += '\n✅ mdformat-tight-lists plugin installed\n\nWhen enabled, applies comprehensive CommonMark formatting with automatic tight list formatting.';
+			} else {
+				desc += '\n⚠️ mdformat-tight-lists plugin not found. Lists won\'t be automatically tightened.\n\nInstall with: pipx inject mdformat mdformat-tight-lists';
+			}
+			mdformatSetting.setDesc(desc);
 		} else {
-			mdformatSetting.setDesc(`❌ mdformat not found\nInstall with: pipx install mdformat && pipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-gfm-alerts`);
+			// Show installation instructions when mdformat is not available
+			new Setting(containerEl)
+				.setName('Enhanced formatting')
+				.setDesc('Install mdformat for enhanced formatting:\n\npipx install mdformat\npipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-gfm-alerts mdformat-tight-lists');
 		}
 
 		// Folder rules section
@@ -514,25 +559,6 @@ class TightListsSettingTab extends PluginSettingTab {
 						this.plugin.settings.folderRules[folderPath].enabled = value;
 						await this.plugin.saveSettings();
 					}));
-
-			// mdformat toggle (only if mdformat is available)
-			if (this.plugin.mdformatAvailable) {
-				new Setting(ruleContainer)
-					.setName('Use mdformat')
-					.setDesc('Apply mdformat in addition to tight lists formatting')
-					.addToggle(toggle => toggle
-						.setValue(rule.useMdformat ?? this.plugin.settings.useMdformat)
-						.onChange(async (value) => {
-							this.plugin.settings.folderRules[folderPath].useMdformat = value;
-							await this.plugin.saveSettings();
-						}));
-			} else {
-				// Show mdformat unavailable message
-				const mdformatSetting = new Setting(ruleContainer)
-					.setName('Use mdformat')
-					.setDesc('❌ mdformat not available - install mdformat to enable this option');
-				mdformatSetting.settingEl.style.opacity = '0.6';
-			}
 
 			// Remove button
 			new Setting(ruleContainer)

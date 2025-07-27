@@ -5,9 +5,6 @@
 # Usage: md-tight-lists.sh [OPTIONS] [file1.md file2.md ...]
 #        cat file.md | md-tight-lists.sh [OPTIONS]
 
-# Default values
-use_mdformat=0
-
 # Function to show usage
 show_usage() {
     cat << EOF
@@ -19,8 +16,6 @@ When no files are provided, acts as a pipe filter reading from stdin.
 
 OPTIONS:
     -h, --help      Show this help message and exit
-    -f, --format    Also run output through mdformat (CommonMark formatter)
-                    if available on PATH
 
 EXAMPLES:
     # Process files in-place
@@ -32,11 +27,8 @@ EXAMPLES:
     # Use as a pipe filter
     cat README.md | $(basename "$0") > README_clean.md
     
-    # Process and format with mdformat
-    $(basename "$0") -f document.md
-    
-    # Pipe with formatting
-    pbpaste | $(basename "$0") --format | pbcopy
+    # Process clipboard content
+    pbpaste | $(basename "$0") | pbcopy
 
 EOF
 }
@@ -94,20 +86,6 @@ process_markdown() {
     '
 }
 
-# Function to process and optionally format
-process_with_options() {
-    if [ "$use_mdformat" -eq 1 ]; then
-        if ! command -v mdformat >/dev/null 2>&1; then
-            echo "Error: mdformat not found in PATH. Install it with: pip install mdformat" >&2
-            echo "Continuing without formatting..." >&2
-            process_markdown
-        else
-            process_markdown | mdformat -
-        fi
-    else
-        process_markdown
-    fi
-}
 
 # Parse options
 files=()
@@ -116,10 +94,6 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             show_usage
             exit 0
-            ;;
-        -f|--format)
-            use_mdformat=1
-            shift
             ;;
         -*)
             echo "Error: Unknown option: $1" >&2
@@ -135,7 +109,7 @@ done
 
 # If no files specified, act as a pipe filter
 if [ ${#files[@]} -eq 0 ]; then
-    process_with_options
+    process_markdown
     exit 0
 fi
 
@@ -157,7 +131,7 @@ for file in "${files[@]}"; do
     tmpfile=$(mktemp)
     
     # Process the file
-    if process_with_options < "$file" > "$tmpfile"; then
+    if process_markdown < "$file" > "$tmpfile"; then
         # Replace original file with processed version
         mv "$tmpfile" "$file"
         echo "✓ Processed: $file" >&2
@@ -167,3 +141,4 @@ for file in "${files[@]}"; do
         echo "✗ Error processing: $file" >&2
     fi
 done
+

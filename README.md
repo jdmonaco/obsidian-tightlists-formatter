@@ -1,6 +1,6 @@
 # Tight Lists Formatter for Obsidian
 
-This Obsidian plugin formats Markdown lists to be "tight" (no empty lines between list items) and optionally applies additional formatting with mdformat.
+This Obsidian plugin formats Markdown lists to be "tight" (no empty lines between list items) and optionally applies comprehensive CommonMark formatting with mdformat.
 
 ## Features
 
@@ -13,10 +13,11 @@ This Obsidian plugin formats Markdown lists to be "tight" (no empty lines betwee
 
 The plugin adds the following commands to the Command Palette:
 
-- **Format current file**: Formats the entire active file using the tight lists formatter
-- **Format current file (with mdformat)**: Formats the file and additionally applies mdformat
+- **Format current file**: Formats the entire active file
 - **Format selected text**: Formats only the selected text
 - **Toggle auto-format**: Quickly enable/disable auto-formatting
+
+Note: Whether mdformat is used for formatting is controlled by the global setting in the plugin configuration.
 
 ## Settings
 
@@ -24,15 +25,15 @@ The plugin adds the following commands to the Command Palette:
 
 - **Enable auto-format**: Toggle automatic formatting when editing files
 - **Auto-format delay**: Set the delay (1-30 seconds) after last edit before formatting
-- **Use mdformat**: Enable mdformat processing globally (requires mdformat to be installed)
+- **Use mdformat**: When mdformat is installed, this toggle controls whether to use it for all formatting operations
 
 ### Folder Rules
 
 You can create folder-specific rules that override global settings. More specific paths take precedence over less specific ones.
 
 For each folder, you can:
+
 - Enable/disable auto-formatting
-- Override the mdformat setting
 
 ## Installation
 
@@ -48,26 +49,28 @@ For each folder, you can:
 
 ### Installing mdformat (Optional)
 
-For the best formatting experience with full GitHub-flavored Markdown (GFM) support, install mdformat using pipx:
+For the best formatting experience with full GitHub-flavored Markdown (GFM) support and automatic tight list formatting, install mdformat using pipx:
 
 ```bash
 # Install pipx if you don't have it
 pip install pipx
 
-# Install mdformat with GFM extensions
+# Install mdformat with GFM extensions and tight-lists plugin
 pipx install mdformat
-pipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-gfm-alerts
+pipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-gfm-alerts mdformat-tight-lists
 ```
 
 **Why pipx?** pipx installs Python packages in isolated environments, preventing dependency conflicts while making the commands globally available.
 
 **What this adds:**
+
 - **mdformat-gfm**: GitHub-flavored Markdown support (tables, strikethrough, etc.)
-- **mdformat-frontmatter**: Preserves YAML frontmatter (already handled by our script)
+- **mdformat-frontmatter**: Preserves YAML frontmatter
 - **mdformat-footnote**: Proper footnote formatting
 - **mdformat-gfm-alerts**: GitHub alert boxes (`> [!NOTE]`, etc.)
+- **mdformat-tight-lists**: Automatic tight list formatting (removes empty lines between list items)
 
-If mdformat is not detected, the plugin will automatically hide the mdformat-related commands and work with basic tight list formatting only.
+If mdformat is not detected, the plugin will use the built-in tight list formatter. When mdformat is available, you can enable it in settings to use comprehensive CommonMark formatting with all installed plugins.
 
 ## Usage
 
@@ -91,7 +94,23 @@ If mdformat is not detected, the plugin will automatically hide the mdformat-rel
 
 ## Technical Details
 
-The plugin uses the `md-tight-lists.sh` shell script to perform the actual formatting. The script:
+The plugin performs formatting in two modes:
+
+### Basic Mode (without mdformat)
+Uses the `md-tight-lists.sh` shell script which:
+
 - Removes empty lines between list items
 - Preserves empty lines before and after list blocks
-- Optionally pipes through mdformat with the `-f` flag
+- Preserves YAML frontmatter
+- Works as a simple pipe filter
+
+### Enhanced Mode (with mdformat)
+When mdformat is enabled and available:
+
+- Calls mdformat directly for comprehensive CommonMark formatting
+- Automatically formats lists as tight lists if mdformat-tight-lists plugin is installed
+- Provides consistent, standardized Markdown formatting
+- Handles tables, footnotes, GFM extensions, and more
+
+### Atomic File Updates
+The plugin reads and writes entire files atomically to prevent merge conflicts with Obsidian's editor. This ensures that formatting operations don't interfere with your active editing session.
