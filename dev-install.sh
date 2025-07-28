@@ -13,6 +13,7 @@ NC='\033[0m' # No Color
 
 # Script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 # Check if dev-vault is in current directory or parent directory
 if [ -d "$SCRIPT_DIR/dev-vault" ]; then
     DEV_VAULT="$SCRIPT_DIR/dev-vault"
@@ -31,12 +32,6 @@ if [ ! -d "$DEV_VAULT" ]; then
     echo -e "${RED}❌ Error: dev-vault not found at $DEV_VAULT${NC}"
     echo "Please create a dev-vault in the current directory first."
     exit 1
-fi
-
-# Check if .obsidian/plugins exists
-if [ ! -d "$DEV_VAULT/.obsidian/plugins" ]; then
-    echo -e "${YELLOW}📁 Creating plugins directory...${NC}"
-    mkdir -p "$DEV_VAULT/.obsidian/plugins"
 fi
 
 # Create plugin directory if it doesn't exist

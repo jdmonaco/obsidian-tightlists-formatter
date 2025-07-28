@@ -29,6 +29,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Improved error handling and user feedback
 - Removed forceUseMdformat parameter from formatting methods
 
+### User Experience Improvements
+- Auto-formatting now skips if text is selected to avoid disrupting user workflow
+- Cursor position is preserved after formatting operations
+- Leading newlines in selected text are now preserved during formatting
+- Added troubleshooting section for mdformat plugin conflicts
+
 ## Initial Development
 
 ### Features

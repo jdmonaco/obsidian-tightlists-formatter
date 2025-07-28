@@ -264,7 +264,17 @@ export default class TightListsFormatterPlugin extends Plugin {
 		const timer = setTimeout(async () => {
 			const shouldFormat = this.shouldAutoFormatFile(file);
 			if (shouldFormat) {
-				await this.formatFile(file, this.settings.useMdformat, true); // true = silent mode for auto-format
+				// Check if there's an active selection - if so, skip and reschedule
+				const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+				if (activeView && activeView.file === file && activeView.editor) {
+					if (this.hasActiveSelection(activeView.editor)) {
+						// Selection exists, reschedule for later
+						this.formatDebounceTimers.delete(file.path);
+						this.scheduleAutoFormat(file);
+						return;
+					}
+				}
+				await this.formatFile(file, this.settings.useMdformat, true, activeView.editor); // true = silent mode for auto-format
 			}
 			this.formatDebounceTimers.delete(file.path);
 		}, this.settings.debounceDelay * 1000);
@@ -279,12 +289,18 @@ export default class TightListsFormatterPlugin extends Plugin {
 			return;
 		}
 
-		await this.formatFile(activeView.file, this.settings.useMdformat, false); // false = not silent, show notices
+		await this.formatFile(activeView.file, this.settings.useMdformat, false, activeView.editor); // false = not silent, show notices
 	}
 
-	async formatFile(file: TFile, useMdformat: boolean, silent: boolean = false) {
+	async formatFile(file: TFile, useMdformat: boolean, silent: boolean = false, editor?: Editor) {
 		// Mark as currently formatting to prevent recursive calls
 		this.currentlyFormatting.add(file.path);
+		
+		// Save cursor position if editor is provided
+		let savedPosition: {line: number, ch: number} | undefined;
+		if (editor) {
+			savedPosition = this.saveCursorPosition(editor);
+		}
 		
 		try {
 			const content = await this.app.vault.read(file);
@@ -298,6 +314,15 @@ export default class TightListsFormatterPlugin extends Plugin {
 			
 			if (formattedResult !== content) {
 				await this.app.vault.modify(file, formattedResult);
+				
+				// Restore cursor position if we saved it
+				if (editor && savedPosition) {
+					// Small delay to ensure the editor has updated
+					setTimeout(() => {
+						this.restoreCursorPosition(editor, savedPosition);
+					}, 50);
+				}
+				
 				if (!silent) {
 					new Notice('File formatted successfully');
 				}
@@ -345,13 +370,22 @@ export default class TightListsFormatterPlugin extends Plugin {
 			// Get the expanded selection text
 			const expandedSelection = editor.getRange(expandedFrom, expandedTo);
 			
+			// Count leading newlines to preserve them
+			const leadingNewlines = this.countLeadingNewlines(expandedSelection);
+			
+			// Strip leading newlines for formatting but preserve the content
+			const contentWithoutLeading = expandedSelection.substring(leadingNewlines);
+			
 			// Ensure we have a newline at the end for proper formatting
-			const contentToFormat = expandedSelection.endsWith('\n') ? expandedSelection : expandedSelection + '\n';
+			const contentToFormat = contentWithoutLeading.endsWith('\n') ? contentWithoutLeading : contentWithoutLeading + '\n';
 			
 			const formatted = await this.runFormatter(contentToFormat, this.settings.useMdformat);
 			
 			// Remove trailing newline if we added one
-			const formattedResult = expandedSelection.endsWith('\n') ? formatted : formatted.trimEnd();
+			let formattedResult = contentWithoutLeading.endsWith('\n') ? formatted : formatted.trimEnd();
+			
+			// Restore leading newlines
+			formattedResult = this.ensureLeadingNewlines(formattedResult, leadingNewlines);
 			
 			// Replace the expanded selection
 			editor.replaceRange(formattedResult, expandedFrom, expandedTo);
@@ -451,6 +485,41 @@ export default class TightListsFormatterPlugin extends Plugin {
 			child.stdin.write(content);
 			child.stdin.end();
 		});
+	}
+
+	// Helper methods for cursor and selection management
+	private hasActiveSelection(editor: Editor): boolean {
+		const selection = editor.getSelection();
+		return selection.length > 0;
+	}
+
+	private saveCursorPosition(editor: Editor): {line: number, ch: number} {
+		return editor.getCursor();
+	}
+
+	private restoreCursorPosition(editor: Editor, pos: {line: number, ch: number}) {
+		// Get document length to bound the position
+		const lastLine = editor.lastLine();
+		const boundedLine = Math.min(pos.line, lastLine);
+		const lineLength = editor.getLine(boundedLine).length;
+		const boundedCh = Math.min(pos.ch, lineLength);
+		
+		editor.setCursor({line: boundedLine, ch: boundedCh});
+		// Clear any selection
+		editor.setSelection({line: boundedLine, ch: boundedCh}, {line: boundedLine, ch: boundedCh});
+	}
+
+	private countLeadingNewlines(text: string): number {
+		const match = text.match(/^(\n*)/);
+		return match ? match[1].length : 0;
+	}
+
+	private ensureLeadingNewlines(text: string, count: number): string {
+		const currentCount = this.countLeadingNewlines(text);
+		if (currentCount < count) {
+			return '\n'.repeat(count - currentCount) + text;
+		}
+		return text;
 	}
 }
 

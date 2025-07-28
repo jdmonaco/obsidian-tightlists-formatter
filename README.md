@@ -114,3 +114,28 @@ When mdformat is enabled and available:
 
 ### Atomic File Updates
 The plugin reads and writes entire files atomically to prevent merge conflicts with Obsidian's editor. This ensures that formatting operations don't interfere with your active editing session.
+
+## Troubleshooting
+
+### mdformat Plugin Conflicts
+
+If you encounter an error like:
+```
+Warning: Plugin conflict. More than one plugin defined a renderer for "list_item" syntax.
+```
+
+This typically occurs when multiple mdformat plugins attempt to handle the same syntax element. Common conflicts:
+
+- **mdformat-gfm** and **mdformat-tight-lists** both handling list items
+- Multiple table formatting plugins
+
+**Solutions:**
+1. Check your installed mdformat plugins: `pipx runpip mdformat list`
+2. Remove conflicting plugins if necessary
+3. Consider using only the essential plugins for your workflow
+
+**Recommended minimal setup:**
+```bash
+pipx install mdformat
+pipx inject mdformat mdformat-frontmatter mdformat-tight-lists
+```
