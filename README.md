@@ -49,26 +49,25 @@ For each folder, you can:
 
 ### Installing mdformat (Optional)
 
-For the best formatting experience with full GitHub-flavored Markdown (GFM) support and automatic tight list formatting, install mdformat using pipx:
+For enhanced formatting with automatic tight list formatting, install mdformat using pipx:
 
 ```bash
 # Install pipx if you don't have it
 pip install pipx
 
-# Install mdformat with GFM extensions and tight-lists plugin
+# Install mdformat with minimal recommended plugins
 pipx install mdformat
-pipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-gfm-alerts mdformat-tight-lists
+pipx inject mdformat mdformat-frontmatter mdformat-tight-lists
 ```
 
 **Why pipx?** pipx installs Python packages in isolated environments, preventing dependency conflicts while making the commands globally available.
 
-**What this adds:**
+**Minimal recommended setup:**
 
-- **mdformat-gfm**: GitHub-flavored Markdown support (tables, strikethrough, etc.)
-- **mdformat-frontmatter**: Preserves YAML frontmatter
-- **mdformat-footnote**: Proper footnote formatting
-- **mdformat-gfm-alerts**: GitHub alert boxes (`> [!NOTE]`, etc.)
-- **mdformat-tight-lists**: Automatic tight list formatting (removes empty lines between list items)
+- **mdformat-frontmatter**: Preserves YAML frontmatter (essential for Obsidian)
+- **mdformat-tight-lists**: Automatic tight list formatting (aggressively removes empty lines between list items)
+
+**Note**: The mdformat-tight-lists plugin is opinionated and converts loose lists to tight lists, changing the HTML output. This is intentional - the plugin believes most lists should be tight lists.
 
 If mdformat is not detected, the plugin will use the built-in tight list formatter. When mdformat is available, you can enable it in settings to use comprehensive CommonMark formatting with all installed plugins.
 
@@ -117,25 +116,21 @@ The plugin reads and writes entire files atomically to prevent merge conflicts w
 
 ## Troubleshooting
 
-### mdformat Plugin Conflicts
+### mdformat Validation Errors
 
-If you encounter an error like:
+Since mdformat-tight-lists is an opinionated plugin that converts loose lists to tight lists (changing HTML output), mdformat runs with the `--no-validate` flag automatically when enabled in this plugin.
+
+If you use mdformat directly from the command line, remember to include the flag:
+```bash
+mdformat --no-validate your-file.md
 ```
-Warning: Plugin conflict. More than one plugin defined a renderer for "list_item" syntax.
-```
 
-This typically occurs when multiple mdformat plugins attempt to handle the same syntax element. Common conflicts:
+### Plugin Installation
 
-- **mdformat-gfm** and **mdformat-tight-lists** both handling list items
-- Multiple table formatting plugins
-
-**Solutions:**
-1. Check your installed mdformat plugins: `pipx runpip mdformat list`
-2. Remove conflicting plugins if necessary
-3. Consider using only the essential plugins for your workflow
-
-**Recommended minimal setup:**
+The minimal recommended setup avoids plugin conflicts:
 ```bash
 pipx install mdformat
 pipx inject mdformat mdformat-frontmatter mdformat-tight-lists
 ```
+
+If you need additional formatting features, you can add more plugins, but be aware that some plugins may conflict with each other.

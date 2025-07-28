@@ -409,7 +409,7 @@ export default class TightListsFormatterPlugin extends Plugin {
 
 	private async runMdformat(content: string): Promise<string> {
 		return new Promise((resolve, reject) => {
-			const child = spawn(this.mdformatPath!, ['-'], {
+			const child = spawn(this.mdformatPath!, ['--no-validate', '-'], {
 				stdio: ['pipe', 'pipe', 'pipe']
 			});
 
