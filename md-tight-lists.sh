@@ -39,6 +39,10 @@ process_markdown() {
     BEGIN {
         in_frontmatter = 0
         frontmatter_ended = 0
+        in_list = 0
+        prev_marker = ""
+        prev_indent = -1
+        prev_list_class = ""
     }
     
     # Handle frontmatter
@@ -62,11 +66,49 @@ process_markdown() {
     
     # Regular processing after frontmatter
     /^[[:space:]]*[-*+][[:space:]]/ || /^[[:space:]]*[0-9]+\.[[:space:]]/ {
-        # This is a list item (list marker followed by space)
-        if (!in_list && NR > 1 && last_line != "") {
-            print ""  # Add empty line before list block
+        # This is a list item
+        
+        # Extract indentation level
+        match($0, /^[[:space:]]*/)
+        indent = RLENGTH
+        
+        # Extract marker
+        if (match($0, /^[[:space:]]*([0-9]+)\.[[:space:]]/, arr)) {
+            marker = "ordered"
+            list_class = "ordered"
+        } else if (match($0, /^[[:space:]]*([-*+])[[:space:]]/, arr)) {
+            marker = arr[1]
+            list_class = "unordered"
         }
+        
+        # Determine if we need a separator
+        need_separator = 0
+        
+        if (!in_list && NR > 1 && last_line != "") {
+            # Starting a new list after non-list content
+            need_separator = 1
+        } else if (in_list) {
+            if (indent == 0) {
+                # Top-level list item - check exact marker
+                if (marker != prev_marker) {
+                    need_separator = 1
+                }
+            } else {
+                # Nested list item - check ordered vs unordered
+                if (list_class != prev_list_class && prev_list_class != "") {
+                    need_separator = 1
+                }
+            }
+        }
+        
+        if (need_separator) {
+            print ""
+        }
+        
         in_list = 1
+        prev_marker = marker
+        prev_indent = indent
+        prev_list_class = list_class
         print
         next
     }
@@ -75,6 +117,8 @@ process_markdown() {
         if (in_list && $0 != "") {
             print ""  # Add empty line after list block
             in_list = 0
+            prev_marker = ""
+            prev_list_class = ""
         }
         if ($0 != "" || !in_list) {
             print
