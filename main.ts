@@ -721,11 +721,11 @@ class TightListsSettingTab extends PluginSettingTab {
 		}
 
                 // Auto-format settings section
-                containerEl.createEl('h2', { text: 'Auto-Formatting Options' });
+                containerEl.createEl('h2', { text: 'Auto-Formatting Modes' });
 
 		// Auto-format toggle
 		new Setting(containerEl)
-			.setName('Enable global auto-formatting modes')
+			.setName('Enable global automatic formatting')
 			.setDesc('Two modes are available. Delay-based formatting occurs at timed intervals as you edit. Event-based formatting is triggered by editor actions which you can select.')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.autoFormatEnabled)
