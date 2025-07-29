@@ -1,8 +1,20 @@
-/*
+/* Tight Lists Formatter Status Bar Styles */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.tight-lists-status {
+    padding: 0 5px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+}
 
-If your plugin does not need CSS, delete this file.
+.tight-lists-status-disabled {
+    opacity: 0.5;
+}
 
-*/
+.tight-lists-status-global {
+    color: var(--text-accent);
+}
+
+.tight-lists-status-folder {
+    color: var(--text-accent-hover);
+}

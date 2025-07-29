@@ -8,13 +8,23 @@ interface TightListsSettings {
 	debounceDelay: number;
 	useMdformat: boolean;
 	folderRules: Record<string, { enabled: boolean }>;
+	eventBasedFormatting: boolean;
+	formatOnFileOpen: boolean;
+	formatOnFocusGain: boolean;
+	formatOnFocusLoss: boolean;
+	disableDelayBasedFormatting: boolean;
 }
 
 const DEFAULT_SETTINGS: TightListsSettings = {
 	autoFormatEnabled: false,
 	debounceDelay: 5,
 	useMdformat: false,
-	folderRules: {}
+	folderRules: {},
+	eventBasedFormatting: false,
+	formatOnFileOpen: false,
+	formatOnFocusGain: false,
+	formatOnFocusLoss: false,
+	disableDelayBasedFormatting: false
 };
 
 export default class TightListsFormatterPlugin extends Plugin {
@@ -25,6 +35,8 @@ export default class TightListsFormatterPlugin extends Plugin {
 	public mdformatPath: string | null = null;
 	public mdformatTightListsAvailable: boolean = false;
 	private currentlyFormatting: Set<string> = new Set();
+	private statusBarItem: HTMLElement;
+	private lastActiveFile: TFile | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -37,6 +49,10 @@ export default class TightListsFormatterPlugin extends Plugin {
 		
 		// Check for mdformat availability
 		await this.checkMdformatAvailability();
+
+		// Add status bar item
+		this.statusBarItem = this.addStatusBarItem();
+		this.updateStatusBar();
 
 		// Add ribbon icon
 		this.addRibbonIcon('list', 'Format lists', () => {
@@ -68,6 +84,7 @@ export default class TightListsFormatterPlugin extends Plugin {
 			callback: () => {
 				this.settings.autoFormatEnabled = !this.settings.autoFormatEnabled;
 				this.saveSettings();
+				this.updateStatusBar();
 				new Notice(`Auto-format ${this.settings.autoFormatEnabled ? 'enabled' : 'disabled'}`);
 			}
 		});
@@ -112,11 +129,55 @@ export default class TightListsFormatterPlugin extends Plugin {
 						return;
 					}
 					
-					const rule = this.shouldAutoFormatFile(view.file);
+					const shouldFormat = this.shouldAutoFormatFile(view.file);
 					
-					if (rule.enabled) {
+					if (shouldFormat && !this.settings.disableDelayBasedFormatting) {
 						this.scheduleAutoFormat(view.file);
 					}
+				}
+			})
+		);
+
+		// Register file-open event for event-based formatting
+		this.registerEvent(
+			this.app.workspace.on('file-open', (file: TFile | null) => {
+				if (file && file.extension === 'md') {
+					// Update status bar
+					this.updateStatusBar();
+					
+					// Trigger event-based format if enabled
+					if (this.settings.eventBasedFormatting && this.settings.formatOnFileOpen) {
+						this.triggerEventBasedFormat(file, 'file-open');
+					}
+				}
+			})
+		);
+
+		// Register active-leaf-change event for focus tracking
+		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', (leaf) => {
+				const view = leaf?.view;
+				if (view instanceof MarkdownView && view.file) {
+					const currentFile = view.file;
+					
+					// Update status bar
+					this.updateStatusBar();
+					
+					// Handle focus loss on previous file
+					if (this.lastActiveFile && this.lastActiveFile !== currentFile) {
+						if (this.settings.eventBasedFormatting && this.settings.formatOnFocusLoss) {
+							this.triggerEventBasedFormat(this.lastActiveFile, 'focus-loss');
+						}
+					}
+					
+					// Handle focus gain on current file
+					if (this.lastActiveFile !== currentFile) {
+						if (this.settings.eventBasedFormatting && this.settings.formatOnFocusGain) {
+							this.triggerEventBasedFormat(currentFile, 'focus-gain');
+						}
+					}
+					
+					this.lastActiveFile = currentFile;
 				}
 			})
 		);
@@ -136,6 +197,7 @@ export default class TightListsFormatterPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		this.updateStatusBar();
 	}
 
 	private async checkMdformatAvailability(): Promise<void> {
@@ -222,7 +284,7 @@ export default class TightListsFormatterPlugin extends Plugin {
 			});
 			
 			// Check if tight-lists extension is mentioned in help output
-			this.mdformatTightListsAvailable = result.includes('tight-lists');
+			this.mdformatTightListsAvailable = result.includes('tight_lists');
 		} catch (error) {
 			this.mdformatTightListsAvailable = false;
 		}
@@ -521,6 +583,100 @@ export default class TightListsFormatterPlugin extends Plugin {
 		}
 		return text;
 	}
+
+	private updateStatusBar() {
+		// Clear existing content
+		this.statusBarItem.empty();
+		
+		// Get current file
+		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!activeView || !activeView.file) {
+			this.statusBarItem.hide();
+			return;
+		}
+		
+		const file = activeView.file;
+		const isAutoFormatEnabled = this.shouldAutoFormatFile(file);
+		
+		// Determine which type of auto-format is active
+		let statusText = '';
+		let statusClass = '';
+		
+		if (!isAutoFormatEnabled) {
+			// Auto-format is disabled
+			statusText = '◎ manual';
+			statusClass = 'tight-lists-status-disabled';
+		} else {
+			// Check if it's folder-based or global
+			const isFolderBased = this.isFolderBasedAutoFormat(file);
+			if (isFolderBased) {
+				statusText = '⦿ dirfmt';
+				statusClass = 'tight-lists-status-folder';
+			} else {
+				statusText = '◉ autofmt';
+				statusClass = 'tight-lists-status-global';
+			}
+		}
+		
+		// Create status bar element
+		const statusEl = this.statusBarItem.createEl('span', {
+			text: statusText,
+			cls: `tight-lists-status ${statusClass}`
+		});
+		
+		// Add hover text
+		statusEl.setAttr('title', 
+			isAutoFormatEnabled 
+				? `Auto-format enabled${this.isFolderBasedAutoFormat(file) ? ' (folder rule)' : ' (global)'}`
+				: 'Auto-format disabled'
+		);
+		
+		this.statusBarItem.show();
+	}
+
+	private isFolderBasedAutoFormat(file: TFile): boolean {
+		const filePath = file.path;
+		
+		// Check if any folder rule applies to this file
+		for (const [folderPath, rule] of Object.entries(this.settings.folderRules)) {
+			const isInFolder = filePath.startsWith(folderPath + '/') || 
+							  filePath === folderPath ||
+							  (filePath.startsWith(folderPath) && filePath.charAt(folderPath.length) === '/');
+			
+			if (isInFolder && rule.enabled) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+
+	private async triggerEventBasedFormat(file: TFile, trigger: string) {
+		// Check if file should be auto-formatted
+		if (!this.shouldAutoFormatFile(file)) {
+			return;
+		}
+		
+		// Check if event-based formatting is enabled
+		if (!this.settings.eventBasedFormatting) {
+			return;
+		}
+		
+		// Avoid formatting if already in progress
+		if (this.currentlyFormatting.has(file.path)) {
+			return;
+		}
+		
+		// Get the editor for cursor preservation (if file is currently open)
+		let editor: Editor | undefined;
+		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (activeView && activeView.file === file) {
+			editor = activeView.editor;
+		}
+		
+		// Format the file
+		await this.formatFile(file, this.settings.useMdformat, true, editor);
+	}
 }
 
 class TightListsSettingTab extends PluginSettingTab {
@@ -535,31 +691,10 @@ class TightListsSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		containerEl.createEl('h2', { text: 'Tight Lists Formatter Settings' });
+		containerEl.createEl('h1', { text: 'Tight Lists Formatter Settings' });
 
-		// Auto-format toggle
-		new Setting(containerEl)
-			.setName('Enable auto-format')
-			.setDesc('Automatically format files when editing')
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.autoFormatEnabled)
-				.onChange(async (value) => {
-					this.plugin.settings.autoFormatEnabled = value;
-					await this.plugin.saveSettings();
-				}));
-
-		// Debounce delay
-		new Setting(containerEl)
-			.setName('Auto-format delay')
-			.setDesc('Seconds to wait after last edit before formatting (1-30)')
-			.addSlider(slider => slider
-				.setLimits(1, 30, 1)
-				.setValue(this.plugin.settings.debounceDelay)
-				.setDynamicTooltip()
-				.onChange(async (value) => {
-					this.plugin.settings.debounceDelay = value;
-					await this.plugin.saveSettings();
-				}));
+                // mdformat toggle section
+                containerEl.createEl('h2', { text: 'Enhanced Markdown Formatting (mdformat)' });
 
 		// mdformat section
 		if (this.plugin.mdformatAvailable) {
@@ -574,7 +709,7 @@ class TightListsSettingTab extends PluginSettingTab {
 					}));
 
 			if (this.plugin.mdformatTightListsAvailable) {
-				mdformatSetting.setDesc('✅ mdformat with tight-lists plugin available. When enabled, applies comprehensive CommonMark formatting with automatic tight list formatting.');
+				mdformatSetting.setDesc('✅ mdformat with tight-lists plugin available. When enabled, applies comprehensive CommonMark spec with greedy tight-lists formatting.');
 			} else {
 				mdformatSetting.setDesc('⚠️ mdformat available but tight-lists plugin not found. Lists won\'t be automatically tightened. Install with: pipx inject mdformat mdformat-tight-lists');
 			}
@@ -585,17 +720,94 @@ class TightListsSettingTab extends PluginSettingTab {
 				.setDesc('Install mdformat for enhanced formatting:\n\npipx install mdformat\npipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-gfm-alerts mdformat-tight-lists');
 		}
 
+                // Auto-format settings section
+                containerEl.createEl('h2', { text: 'Auto-Formatting Options' });
+
+		// Auto-format toggle
+		new Setting(containerEl)
+			.setName('Enable global auto-formatting modes')
+			.setDesc('Two modes are available. Delay-based formatting occurs at timed intervals as you edit. Event-based formatting is triggered by editor actions which you can select.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoFormatEnabled)
+				.onChange(async (value) => {
+					this.plugin.settings.autoFormatEnabled = value;
+					await this.plugin.saveSettings();
+					this.display();
+				}));
+
+                // Show delay-based options
+                new Setting(containerEl)
+                        .setName('Enable delay-based auto-formatting')
+                        .setDesc('Format the active note at set delay after last edit')
+                        .addToggle(toggle => toggle
+                                .setValue(!this.plugin.settings.disableDelayBasedFormatting)
+                                .onChange(async (value) => {
+                                        this.plugin.settings.disableDelayBasedFormatting = !value;
+                                        await this.plugin.saveSettings();
+                                        this.display();
+                                }));
+
+                if (!this.plugin.settings.disableDelayBasedFormatting) {
+                    // Debounce delay
+                    new Setting(containerEl)
+                            .setName('Auto-format delay')
+                            .setDesc('Seconds to wait after last edit (1-10)')
+                            .addSlider(slider => slider
+                                    .setLimits(1, 10, 1)
+                                    .setValue(this.plugin.settings.debounceDelay)
+                                    .setDynamicTooltip()
+                                    .onChange(async (value) => {
+                                            this.plugin.settings.debounceDelay = value;
+                                            await this.plugin.saveSettings();
+                                    }));
+                }
+
+                new Setting(containerEl)
+                        .setName('Enable event-based auto-formatting')
+                        .setDesc('Format note files on editor events like file open and focus change')
+                        .addToggle(toggle => toggle
+                                .setValue(this.plugin.settings.eventBasedFormatting)
+                                .onChange(async (value) => {
+                                        this.plugin.settings.eventBasedFormatting = value;
+                                        await this.plugin.saveSettings();
+                                        this.display();
+                                }));
+
+                if (this.plugin.settings.eventBasedFormatting) {
+                        // Show event trigger options
+                        new Setting(containerEl)
+                                .setName('Format on file open')
+                                .setDesc('Format files when they are opened')
+                                .addToggle(toggle => toggle
+                                        .setValue(this.plugin.settings.formatOnFileOpen)
+                                        .onChange(async (value) => {
+                                                this.plugin.settings.formatOnFileOpen = value;
+                                                await this.plugin.saveSettings();
+                                        }));
+
+                        new Setting(containerEl)
+                                .setName('Format on focus gain')
+                                .setDesc('Format a file when its inactive pane gains focus')
+                                .addToggle(toggle => toggle
+                                        .setValue(this.plugin.settings.formatOnFocusGain)
+                                        .onChange(async (value) => {
+                                                this.plugin.settings.formatOnFocusGain = value;
+                                                await this.plugin.saveSettings();
+                                        }));
+
+                        new Setting(containerEl)
+                                .setName('Format on focus loss')
+                                .setDesc('Format a file when its active pane loses focus')
+                                .addToggle(toggle => toggle
+                                        .setValue(this.plugin.settings.formatOnFocusLoss)
+                                        .onChange(async (value) => {
+                                                this.plugin.settings.formatOnFocusLoss = value;
+                                                await this.plugin.saveSettings();
+                                        }));
+                }
+
 		// Folder rules section
-		containerEl.createEl('h3', { text: 'Folder-Specific Rules' });
-		
-		const descEl = containerEl.createEl('div', { cls: 'setting-item-description' });
-		descEl.createEl('p', { 
-			text: `Configure automatic formatting for specific folders. When enabled, files in these folders will be auto-formatted after the global delay (currently ${this.plugin.settings.debounceDelay} seconds). Folder rules override global auto-format settings, and more specific paths take precedence over less specific ones.`
-		});
-		descEl.createEl('p', { 
-			text: 'Note: Adding a folder rule enables automatic formatting for that folder, even if global auto-format is disabled.',
-			cls: 'mod-warning'
-		});
+		containerEl.createEl('h2', { text: 'Folder-Specific Auto-Formatting' });
 
 		// Add new folder rule button
 		new Setting(containerEl)
@@ -610,6 +822,10 @@ class TightListsSettingTab extends PluginSettingTab {
 		// Display existing folder rules
 		const rulesContainer = containerEl.createDiv('folder-rules-container');
 		this.displayFolderRules(rulesContainer);
+		containerEl.createEl('p', { 
+			text: 'Note: Adding a folder rule enables automatic formatting for that folder, even if global auto-format is disabled.',
+			cls: 'mod-warning'
+		});
 	}
 
 	displayFolderRules(container: HTMLElement) {
@@ -632,27 +848,24 @@ class TightListsSettingTab extends PluginSettingTab {
 			headerEl.style.marginTop = '0';
 			headerEl.style.marginBottom = '8px';
 
-			// Auto-format toggle
+			// Folder rule with auto-format toggle and remove button
 			new Setting(ruleContainer)
 				.setName('Auto-format')
-				.setDesc('Enable automatic formatting for files in this folder')
+				.setDesc(`Enable auto-formatting for all files in "${folderPath}"`)
 				.addToggle(toggle => toggle
 					.setValue(rule.enabled)
 					.onChange(async (value) => {
 						this.plugin.settings.folderRules[folderPath].enabled = value;
 						await this.plugin.saveSettings();
-					}));
-
-			// Remove button
-			new Setting(ruleContainer)
+					}))
 				.addButton(button => button
-					.setButtonText('Remove folder rule')
+					.setButtonText('Remove rule')
 					.setWarning()
 					.onClick(async () => {
 						delete this.plugin.settings.folderRules[folderPath];
 						await this.plugin.saveSettings();
 						this.display();
-					}));
+                                        }));
 		}
 	}
 
@@ -705,7 +918,7 @@ class FolderRuleModal extends Modal {
 		// Add explanation
 		const explanationEl = contentEl.createEl('p', { cls: 'setting-item-description' });
 		explanationEl.innerHTML = `
-			Enter the path to a folder in your vault. This will enable automatic formatting for all files in that folder.
+			Enter the path to a folder in your vault. This will enable auto-formatting (using the current delay and/or event settings) for all files contained in the folder or any of its subfolders. 
 			<br><br>
 			<strong>Examples:</strong>
 			<br>• <code>Notes</code> - Top-level folder
