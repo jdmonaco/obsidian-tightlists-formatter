@@ -1,6 +1,6 @@
 # Tight Lists Formatter for Obsidian
 
-This Obsidian plugin formats Markdown lists to be "tight" (no empty lines between list items) and optionally applies comprehensive CommonMark formatting with mdformat.
+This Obsidian plugin formats Markdown lists to be "tight" (no empty lines between list items) and optionally applies comprehensive CommonMark formatting to your notes using [mdformat](https://mdformat.readthedocs.io/en/stable/users/installation_and_usage.html), which should be installed with the [mdformat-tight-lists](https://github.com/jdmonaco/mdformat-tight-lists) plugin.
 
 ## Features
 
@@ -29,11 +29,7 @@ Note: Whether mdformat is used for formatting is controlled by the global settin
 
 ### Folder Rules
 
-You can create folder-specific rules that override global settings. More specific paths take precedence over less specific ones.
-
-For each folder, you can:
-
-- Enable/disable auto-formatting
+If you want select auto-formatting, you can add rules for specific folders to enable auto-formatting for all notes in that folder. 
 
 ## Installation
 
@@ -45,11 +41,11 @@ For each folder, you can:
 
 - Obsidian desktop app (this plugin uses shell scripts and is desktop-only)
 - Bash shell available on your system
-- Optional: `mdformat` with GitHub-flavored Markdown support for enhanced formatting
+- Optional: install [mdformat](https://mdformat.readthedocs.io/en/stable/users/installation_and_usage.html) &mdash; and the [mdformat-tight-lists](https://github.com/jdmonaco/mdformat-tight-lists) &mdash; for comprehensive Markdown formatting based on the [CommonMark spec](https://spec.commonmark.org/0.31.2/#introduction).
 
 ### Installing mdformat (Optional)
 
-For enhanced formatting with automatic tight list formatting, install mdformat using pipx:
+By default, the plugin will use an internal shell script for formatting, but you can install mdformat and enable enhanced mdformat-based formatting for comprehensive CommonMark formatting. Install mdformat using pipx:
 
 ```bash
 # Install pipx if you don't have it
@@ -67,9 +63,12 @@ pipx inject mdformat mdformat-frontmatter mdformat-tight-lists
 - **mdformat-frontmatter**: Preserves YAML frontmatter (essential for Obsidian)
 - **mdformat-tight-lists**: Automatic tight list formatting (aggressively removes empty lines between list items)
 
-**Note**: The mdformat-tight-lists plugin is opinionated and converts loose lists to tight lists, changing the HTML output. This is intentional - the plugin believes most lists should be tight lists.
+**Optional mdformat plugins (see [full list](https://mdformat.readthedocs.io/en/stable/users/plugins.html)):**
 
-If mdformat is not detected, the plugin will use the built-in tight list formatter. When mdformat is available, you can enable it in settings to use comprehensive CommonMark formatting with all installed plugins.
+- **mdformat-gfm**: Support GitHub-Flavored Markdown (GFM) extensions (note: may conflict with tight-list processing)
+- **[mdformat-simple-breaks](https://github.com/csala/mdformat-simple-breaks)**: Correct mdformat's flavor of thematic breaks
+
+**Note**: The mdformat-tight-lists plugin is opinionated and converts loose lists to tight lists. This yields a semantic change: more lists will contain only bare list items that are *not* encapsulated in `<p>` tags. This is intentional &mdash; as a result the Obsidian Tight Lists Formatter plugin calls `mdformat` (when enabled) with its `--no-validate` option to prevent validation errors.
 
 ## Usage
 
@@ -83,7 +82,7 @@ If mdformat is not detected, the plugin will use the built-in tight list formatt
 
 1. Enable auto-format in plugin settings
 2. Edit your Markdown files normally
-3. The formatter will run automatically after the configured delay
+3. The active file will be formatted automatically after the configured delay or following certain editor events
 
 ### Selection Formatting
 
@@ -91,46 +90,6 @@ If mdformat is not detected, the plugin will use the built-in tight list formatt
 2. Run the "Format selected text" command
 3. Only the selected text will be formatted
 
-## Technical Details
-
-The plugin performs formatting in two modes:
-
-### Basic Mode (without mdformat)
-Uses the `md-tight-lists.sh` shell script which:
-
-- Removes empty lines between list items
-- Preserves empty lines before and after list blocks
-- Preserves YAML frontmatter
-- Works as a simple pipe filter
-
-### Enhanced Mode (with mdformat)
-When mdformat is enabled and available:
-
-- Calls mdformat directly for comprehensive CommonMark formatting
-- Automatically formats lists as tight lists if mdformat-tight-lists plugin is installed
-- Provides consistent, standardized Markdown formatting
-- Handles tables, footnotes, GFM extensions, and more
-
 ### Atomic File Updates
 The plugin reads and writes entire files atomically to prevent merge conflicts with Obsidian's editor. This ensures that formatting operations don't interfere with your active editing session.
 
-## Troubleshooting
-
-### mdformat Validation Errors
-
-Since mdformat-tight-lists is an opinionated plugin that converts loose lists to tight lists (changing HTML output), mdformat runs with the `--no-validate` flag automatically when enabled in this plugin.
-
-If you use mdformat directly from the command line, remember to include the flag:
-```bash
-mdformat --no-validate your-file.md
-```
-
-### Plugin Installation
-
-The minimal recommended setup avoids plugin conflicts:
-```bash
-pipx install mdformat
-pipx inject mdformat mdformat-frontmatter mdformat-tight-lists
-```
-
-If you need additional formatting features, you can add more plugins, but be aware that some plugins may conflict with each other.
