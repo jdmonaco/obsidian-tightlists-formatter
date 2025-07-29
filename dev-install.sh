@@ -13,6 +13,8 @@ NC='\033[0m' # No Color
 
 # Script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+SHNAME="md-tight-lists.sh"
 
 # Check if dev-vault is in current directory or parent directory
 if [ -d "$SCRIPT_DIR/dev-vault" ]; then
@@ -40,23 +42,32 @@ if [ ! -d "$PLUGIN_DIR" ]; then
     mkdir -p "$PLUGIN_DIR"
 fi
 
-# Function to create hard link
-create_hard_link() {
-    local source="$1"
-    local target="$2"
+# Function to ensure that two files are hard-linked
+ensure_hardlink() {
+    local src="$1"
+    local tgt="$2"
     
-    # Remove existing file/link if present
-    if [ -e "$target" ]; then
-        rm -f "$target"
+    # Check if parent file exists
+    if [[ ! -f "$src" ]]; then
+        echo -e "${RED}✗${NC} Missing: $(basename "$src")"
+        return 1
     fi
     
-    # Create hard link
-    if [ -f "$source" ]; then
-        ln "$source" "$target"
-        echo -e "${GREEN}✓${NC} Linked: $(basename "$source")"
+    # Get inodes (will be empty if file doesn't exist)
+    local src_inode=$(stat -f %i "$src" 2>/dev/null)
+    local tgt_inode=$(stat -f %i "$tgt" 2>/dev/null)
+    
+    # If files don't have same inode, fix it
+    if [[ "$src_inode" != "$tgt_inode" ]]; then
+        rm -f "$tgt"  # Remove if it exists
+        ln "$src" "$tgt" 2>/dev/null
+	if [[ -f "$tgt" ]]; then
+	    echo -e "${GREEN}✓${NC} Linked: ${src#$REPO_DIR/} -> ${tgt#$REPO_DIR/}"
+	else
+	    echo -e "${RED}✗${NC} Error: Failed to link ${tgt#$REPO_DIR/}"
+	fi
     else
-        echo -e "${RED}✗${NC} Missing: $(basename "$source")"
-        return 1
+        echo -e "${GREEN}✓${NC} Already Linked: ${tgt#$REPO_DIR/}"
     fi
 }
 
@@ -75,20 +86,37 @@ FILES_TO_LINK=(
     "main.js"
     "manifest.json"
     "styles.css"
-    "md-tight-lists.sh"
+    $SHNAME
 )
 
 FAILED=0
+
+# First: Link shell script from parent repo directory
+if ! ensure_hardlink "$REPO_DIR/$SHNAME" "$SCRIPT_DIR/$SHNAME"; then
+    FAILED=1
+fi
+
+# Make sure the shell script is executable
+if [ -f "$SCRIPT_DIR/$SHNAME" ]; then
+    if [ ! -x "$SCRIPT_DIR/$SHNAME" ]; then
+        chmod +x "$SCRIPT_DIR/$SHNAME"
+        echo -e "${GREEN}✓${NC} Made executable: ${SCRIPT_DIR#$REPO_DIR/}/$SHNAME"
+    fi
+fi
+
+# Second: Link all the main plugin files
 for file in "${FILES_TO_LINK[@]}"; do
-    if ! create_hard_link "$SCRIPT_DIR/$file" "$PLUGIN_DIR/$file"; then
+    if ! ensure_hardlink "$SCRIPT_DIR/$file" "$PLUGIN_DIR/$file"; then
         FAILED=1
     fi
 done
 
-# Make sure the shell script is executable
-if [ -f "$PLUGIN_DIR/md-tight-lists.sh" ]; then
-    chmod +x "$PLUGIN_DIR/md-tight-lists.sh"
-    echo -e "${GREEN}✓${NC} Made md-tight-lists.sh executable"
+# Make sure the plugin shell script is executable
+if [ -f "$PLUGIN_DIR/$SHNAME" ]; then
+    if [ ! -x "$PLUGIN_DIR/$SHANME" ]; then
+        chmod +x "$PLUGIN_DIR/$SHNAME"
+        echo -e "${GREEN}✓${NC} Made executable: ${PLUGIN_DIR#$REPO_DIR/}/$SHNAME"
+    fi
 fi
 
 # Summary

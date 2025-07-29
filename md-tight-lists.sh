@@ -141,4 +141,3 @@ for file in "${files[@]}"; do
         echo "✗ Error processing: $file" >&2
     fi
 done
-
