@@ -105,17 +105,6 @@ export default class TightListsFormatterPlugin extends Plugin {
 								this.formatSelection(editor);
 							});
 					});
-					// Only add mdformat option if available
-					if (this.mdformatAvailable) {
-						menu.addItem((item) => {
-							item
-								.setTitle('Format Tight Lists (mdformat)')
-								.setIcon('list')
-								.onClick(() => {
-									this.formatSelection(editor, true);
-								});
-						});
-					}
 				}
 			})
 		);
@@ -336,7 +325,7 @@ export default class TightListsFormatterPlugin extends Plugin {
 						return;
 					}
 				}
-				await this.formatFile(file, this.settings.useMdformat, true, activeView.editor); // true = silent mode for auto-format
+				await this.formatFile(file, this.settings.useMdformat, true, activeView?.editor); // true = silent mode for auto-format
 			}
 			this.formatDebounceTimers.delete(file.path);
 		}, this.settings.debounceDelay * 1000);
@@ -381,7 +370,9 @@ export default class TightListsFormatterPlugin extends Plugin {
 				if (editor && savedPosition) {
 					// Small delay to ensure the editor has updated
 					setTimeout(() => {
-						this.restoreCursorPosition(editor, savedPosition);
+						if (savedPosition) {
+							this.restoreCursorPosition(editor, savedPosition);
+						}
 					}, 50);
 				}
 				
@@ -895,8 +886,7 @@ class TightListsSettingTab extends PluginSettingTab {
 
 			// Add the rule
 			this.plugin.settings.folderRules[folderPath] = {
-				enabled: true,
-				useMdformat: this.plugin.settings.useMdformat
+				enabled: true
 			};
 			await this.plugin.saveSettings();
 			this.display();
