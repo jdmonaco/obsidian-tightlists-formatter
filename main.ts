@@ -23,7 +23,7 @@ const DEFAULT_SETTINGS: TightListsSettings = {
     eventBasedFormatting: false,
     formatOnFileOpen: true,
     formatOnFocusGain: true,
-    formatOnFocusLoss: true,
+    formatOnFocusLoss: false,
     folderRules: {},
 };
 
@@ -669,12 +669,12 @@ class TightListsSettingTab extends PluginSettingTab {
         containerEl.createEl('h1', { text: 'Tight Lists Formatter Settings' });
 
         // mdformat toggle section
-        containerEl.createEl('h2', { text: 'Global Formatting Options' });
+        containerEl.createEl('h2', { text: 'Global Formatter Options' });
 
         // Auto-format toggle
         new Setting(containerEl)
             .setName('Enable global automatic formatting')
-            .setDesc('When enabled, the note file in the active editor pane will be automatically formatted using the formatting modes selected below.')
+            .setDesc('When enabled, the note file in the active editor pane will be automatically formatted. Note: At least one auto-formatting mode must be selected.')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.autoFormatEnabled)
                 .onChange(async (value) => {
@@ -701,7 +701,7 @@ class TightListsSettingTab extends PluginSettingTab {
                     }));
 
             if (this.plugin.mdformatTightListsAvailable) {
-                mdformatSetting.setDesc('✅ mdformat with tight-lists plugin available. When enabled, applies comprehensive CommonMark spec with tight-lists formatting.');
+                mdformatSetting.setDesc('✅ mdformat with tight-lists plugin available. When enabled, applies comprehensive CommonMark-based rules with tight-lists formatting.');
             } else {
                 mdformatSetting.setDesc('⚠️ mdformat available but tight-lists plugin not found. Install with: pipx inject mdformat mdformat-tight-lists');
             }
@@ -709,20 +709,11 @@ class TightListsSettingTab extends PluginSettingTab {
             // Show installation instructions when mdformat is not available
             new Setting(containerEl)
                 .setName('Enhanced formatting')
-                .setDesc('Install mdformat for enhanced formatting:\n\npipx install mdformat\npipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-gfm-alerts mdformat-tight-lists');
+                .setDesc('Install mdformat for enhanced formatting:\n\npipx install mdformat\npipx inject mdformat mdformat-frontmatter mdformat-tight-lists');
         }
 
         // Auto-format settings section
         containerEl.createEl('h2', { text: 'Auto-Formatting Modes' });
-
-        // Show info message when auto-formatting is enabled
-        if (this.plugin.settings.autoFormatEnabled) {
-            const infoEl = containerEl.createEl('p', { 
-                text: 'Note: At least one formatting mode must remain enabled while global auto-formatting is active.',
-                cls: 'setting-item-description'
-            });
-            infoEl.style.marginBottom = '20px';
-        }
 
         // Show delay-based options
         new Setting(containerEl)
@@ -745,7 +736,7 @@ class TightListsSettingTab extends PluginSettingTab {
         if (this.plugin.settings.enableDelayBasedFormatting) {
             // Debounce delay
             new Setting(containerEl)
-                .setName(`Auto-format delay (${this.plugin.settings.debounceDelay} seconds since last edit)`)
+                .setName(`Auto-format delay (${this.plugin.settings.debounceDelay} second${this.plugin.settings.debounceDelay > 1 ? 's' : ''} since last edit)`)
                 .addSlider(slider => slider
                     .setLimits(1, 10, 1)
                     .setValue(this.plugin.settings.debounceDelay)
@@ -810,7 +801,7 @@ class TightListsSettingTab extends PluginSettingTab {
         // Add new folder rule button
         new Setting(containerEl)
             .setName('Add folder rule')
-            .setDesc('Add a new folder-specific rule for auto-formatting note files')
+            .setDesc('Add a rule to auto-format all note files in specific folder using the selected modes')
             .addButton(button => button
                 .setButtonText('Add rule')
                 .onClick(() => {
@@ -835,7 +826,7 @@ class TightListsSettingTab extends PluginSettingTab {
             ruleContainer.style.border = '1px solid var(--background-modifier-border)';
             ruleContainer.style.borderRadius = '6px';
             ruleContainer.style.padding = '12px';
-            ruleContainer.style.marginBottom = '12px';
+            ruleContainer.style.paddingBottom = '0px';
             ruleContainer.style.backgroundColor = 'var(--background-secondary)';
 
             // Folder rule with auto-format toggle and remove button
@@ -873,6 +864,16 @@ class TightListsSettingTab extends PluginSettingTab {
             // Validate folder path
             if (!this.validateFolderPath(folderPath)) {
                 new Notice(`Folder not found: "${folderPath}". Please enter a valid folder path.`);
+                return;
+            }
+
+            // Warn about trying to add the root vault folder
+            if (folderPath == "/") {
+                if (this.plugin.settings.autoFormatEnabled) {
+                    new Notice('Vault folder: Global auto-formatting is already enabled.');
+                } else {
+                    new Notice('Vault folder: Enable global auto-formatting instead of adding a folder rule.');
+                }
                 return;
             }
 
