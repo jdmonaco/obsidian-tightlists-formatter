@@ -73,11 +73,14 @@ process_markdown() {
         indent = RLENGTH
         
         # Extract marker
-        if (match($0, /^[[:space:]]*([0-9]+)\.[[:space:]]/, arr)) {
+        if (match($0, /^[[:space:]]*[0-9]+\.[[:space:]]/)) {
             marker = "ordered"
             list_class = "ordered"
-        } else if (match($0, /^[[:space:]]*([-*+])[[:space:]]/, arr)) {
-            marker = arr[1]
+        } else if (match($0, /^[[:space:]]*[-*+][[:space:]]/)) {
+            # Extract the specific marker character
+            match($0, /^[[:space:]]*/)
+            prefix_len = RLENGTH
+            marker = substr($0, prefix_len + 1, 1)
             list_class = "unordered"
         }
         
@@ -88,15 +91,28 @@ process_markdown() {
             # Starting a new list after non-list content
             need_separator = 1
         } else if (in_list) {
-            if (indent == 0) {
-                # Top-level list item - check exact marker
+            if (indent == 0 && prev_indent == 0) {
+                # Top-level to top-level - check exact marker
                 if (marker != prev_marker) {
                     need_separator = 1
                 }
-            } else {
-                # Nested list item - check ordered vs unordered
+            } else if (indent > 0 && prev_indent > 0) {
+                # Nested to nested - check ordered vs unordered
                 if (list_class != prev_list_class && prev_list_class != "") {
                     need_separator = 1
+                }
+            } else if (indent != prev_indent) {
+                # Changing indentation levels
+                if (indent > prev_indent) {
+                    # Going deeper - check if changing list type
+                    if (list_class != prev_list_class) {
+                        need_separator = 1
+                    }
+                } else if (indent < prev_indent) {
+                    # Coming back up - check if we were in a different list type
+                    if (list_class != prev_list_class) {
+                        need_separator = 1
+                    }
                 }
             }
         }
@@ -145,7 +161,7 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            files+=("$1")
+            files[${#files[@]}]="$1"
             shift
             ;;
     esac
