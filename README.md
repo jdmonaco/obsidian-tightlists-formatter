@@ -1,95 +1,95 @@
 # Tight Lists Formatter for Obsidian
 
-This Obsidian plugin formats Markdown lists to be "tight" (no empty lines between list items) and optionally applies comprehensive CommonMark formatting to your notes using [mdformat](https://mdformat.readthedocs.io/en/stable/users/installation_and_usage.html), which should be installed with the [mdformat-tight-lists](https://github.com/jdmonaco/mdformat-tight-lists) plugin.
+Automatically format Markdown lists to be "tight" (no empty lines between items) in your Obsidian notes.
+
+## Quick Start
+
+1. **Install** the plugin from Obsidian Community Plugins
+2. **Choose your workflow**:
+    - **Manual formatting**: Use Command Palette commands to format files or selected text
+    - **Auto-formatting**: Enable automatic formatting in settings (global or per-folder)
+3. **Write naturally** - the plugin preserves list semantics while removing unnecessary blank lines
+
+**Key formatting behavior**: The plugin distinguishes between different top-level list markers (`-`, `*`, `+`) and treats them as separate lists. With mdformat formatting enabled, nested “sibling” lists are also grouped by type (ordered vs. unordered).
 
 ## Features
 
-- **Manual Formatting**: Format the entire file or just selected text via commands
-- **Auto-Formatting**: Automatically format files on save with a configurable delay
-- **Folder Rules**: Configure different formatting settings for specific folders
-- **mdformat Integration**: Optionally pipe content through mdformat for additional CommonMark formatting
+- ✨ **Smart List Formatting**: Automatically removes empty lines between list items while preserving list boundaries
+- 🎯 **Flexible Targeting**: Format entire files, selected text, or auto-format as you type
+- ⚡ **Two Auto-Format Modes**: Delay-based (after edits) or event-based (on file events)
+- 📁 **Folder Rules**: Apply different formatting settings to specific folders
+- 🔧 **mdformat Integration**: Optional enhancement for comprehensive Markdown formatting based on the CommonMark standard
 
 ## Commands
 
 The plugin adds the following commands to the Command Palette:
 
 - **Format current file**: Formats the entire active file
-- **Format selected text**: Formats only the selected text
-- **Toggle auto-format**: Quickly enable/disable auto-formatting
-
-Note: Whether mdformat is used for formatting is controlled by the global setting in the plugin configuration.
+- **Format selected text**: Formats only the currently selected text
+- **Toggle auto-format**: Quickly enable/disable global auto-formatting
 
 ## Settings
 
-### Global Settings
+### Global Formatter Options
 
-- **Enable auto-format**: Toggle automatic formatting when editing files
-- **Auto-format delay**: Set the delay (1-30 seconds) after last edit before formatting
-- **Use mdformat**: When mdformat is installed, this toggle controls whether to use it for all formatting operations
+- **Enable global automatic formatting**: Apply auto-formatting across your vault
+- **Use mdformat**: When [mdformat](https://mdformat.readthedocs.io/en/stable/) is inst, apply comprehensive formatting based on the CommonMark standard
 
-### Folder Rules
+### Auto-Formatting Modes
 
-If you want select auto-formatting, you can add rules for specific folders to enable auto-formatting for all notes in that folder. 
+Choose one or both modes (at least one required when auto-formatting is enabled):
 
-## Installation
+**Delay-based mode** (default by enabled)
 
-1. Copy the plugin folder to your vault's `.obsidian/plugins/` directory
-2. Ensure the `md-tight-lists.sh` script has executable permissions
-3. Enable the plugin in Obsidian's Community Plugins settings
+- Formats after a pause in editing (default: 2 seconds)
+- Adjustable delay: 1-10 seconds
 
-## Requirements
+**Event-based mode**
 
-- Obsidian desktop app (this plugin uses shell scripts and is desktop-only)
-- Bash shell available on your system
-- Optional: install [mdformat](https://mdformat.readthedocs.io/en/stable/users/installation_and_usage.html) &mdash; and the [mdformat-tight-lists](https://github.com/jdmonaco/mdformat-tight-lists) &mdash; for comprehensive Markdown formatting based on the [CommonMark spec](https://spec.commonmark.org/0.31.2/#introduction).
+- Format when opening a note
+- Format when switching between notes
+- Format when leaving a note
 
-### Installing mdformat (Optional)
+### Folder-Specific Rules
 
-By default, the plugin will use an internal shell script for formatting, but you can install mdformat and enable enhanced mdformat-based formatting for comprehensive CommonMark formatting. Install mdformat using pipx:
+Create rules to auto-format all notes within specific folders, independent of global settings. Useful for maintaining consistent formatting in project folders or shared directories.
+
+## Advanced Setup: mdformat Integration
+
+For enhanced formatting based on the CommonMark standard, install mdformat:
 
 ```bash
-# Install pipx if you don't have it
+# Install pipx if needed
 pip install pipx
 
-# Install mdformat with minimal recommended plugins
+# Install mdformat with recommended plugins
 pipx install mdformat
 pipx inject mdformat mdformat-frontmatter mdformat-tight-lists
 ```
 
-**Why pipx?** pipx installs Python packages in isolated environments, preventing dependency conflicts while making the commands globally available.
+**Why mdformat?**
 
-**Minimal recommended setup:**
+- Comprehensive formatting based on the CommonMark standard
+- Preserves Obsidian frontmatter
+- Additional plugin ecosystem for extended Markdown features
 
-- **mdformat-frontmatter**: Preserves YAML frontmatter (essential for Obsidian)
-- **mdformat-tight-lists**: Automatic tight list formatting (aggressively removes empty lines between list items)
+**Optional mdformat plugins:**
 
-**Optional mdformat plugins (see [full list](https://mdformat.readthedocs.io/en/stable/users/plugins.html)):**
+- `mdformat-gfm`: GitHub Flavored Markdown support
+- `mdformat-footnote`: Footnote formatting
+- `mdformat-simple-breaks`: Alternative line break handling
 
-- **mdformat-gfm**: Support GitHub-Flavored Markdown (GFM) extensions (note: may conflict with tight-list processing)
-- **[mdformat-simple-breaks](https://github.com/csala/mdformat-simple-breaks)**: Correct mdformat's flavor of thematic breaks
+See the [full list of mdformat plugins](https://mdformat.readthedocs.io/en/stable/users/plugins.html).
 
-**Note**: The mdformat-tight-lists plugin is opinionated and converts loose lists to tight lists. This yields a semantic change: more lists will contain only bare list items that are *not* encapsulated in `<p>` tags. This is intentional &mdash; as a result the Obsidian Tight Lists Formatter plugin calls `mdformat` (when enabled) with its `--no-validate` option to prevent validation errors.
+## Requirements
 
-## Usage
+- Obsidian desktop app (uses shell scripts, desktop-only)
+- Bash shell (pre-installed on macOS/Linux, available via WSL on Windows)
+- Optional: install mdformat for enhanced formatting
 
-### Manual Formatting
+## Technical Notes
 
-1. Open a Markdown file
-2. Use the Command Palette (Cmd/Ctrl+P) and search for "Format"
-3. Select the desired formatting command
-
-### Auto-Formatting
-
-1. Enable auto-format in plugin settings
-2. Edit your Markdown files normally
-3. The active file will be formatted automatically after the configured delay or following certain editor events
-
-### Selection Formatting
-
-1. Select text in the editor
-2. Run the "Format selected text" command
-3. Only the selected text will be formatted
-
-### Atomic File Updates
-The plugin reads and writes entire files atomically to prevent merge conflicts with Obsidian's editor. This ensures that formatting operations don't interfere with your active editing session.
-
+- **Atomic Updates**: The plugin reads and writes files atomically to prevent conflicts with Obsidian's editor
+- **List Type Preservation**: Different markers (`-`, `*`, `+`) for adjacent top-level lists are separated by empty lines
+- **Smart Nesting**: Nested lists are grouped by type (ordered vs unordered) regardless of marker (mdformat-only for now)
+- **Validation Override**: When using mdformat, the plugin passes `--no-validate` to allow the opinionated tight-lists formatting
